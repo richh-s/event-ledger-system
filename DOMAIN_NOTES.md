@@ -4,11 +4,11 @@
 
 ## 1. EDA vs. ES Distinction
 
-> **Direct answer:** This pattern is **closer to EDA-style instrumentation than ES, but strictly speaking it is observability instrumentation rather than a true event-driven architecture.** It is not ES because the callbacks are not the source of truth — the mutable database row is. Events in ES ARE the state; callbacks are disposable side-effects that inform rather than constitute reality.
+> **Direct answer:** It is **Event-Driven Architecture (EDA), not Event Sourcing (ES)**. In this pattern, events are emitted as side-effects or notifications of things that have happened (callbacks/traces), but the source of truth remains the mutable database row. It is not ES because the events themselves are not the source of truth; if the events are lost, the system's state is not affected.
 
-### The Callback Pattern Is Neither Pure EDA nor ES
+### The Callback Pattern is EDA, Not ES
 
-A component using LangChain trace callbacks to capture event-like data (e.g., `on_llm_start`, `on_chain_end`) is **observability instrumentation**, not Event-Driven Architecture (EDA) and certainly not Event Sourcing (ES). The distinction matters:
+A component using LangChain trace callbacks to capture event-like data (e.g., `on_llm_start`, `on_chain_end`) is effectively **Event-Driven Architecture (EDA)**, but certainly not Event Sourcing (ES). The distinction matters:
 
 | Dimension | LangChain Callbacks | Event-Driven Architecture (EDA) | Event Sourcing (ES) |
 |---|---|---|---|
@@ -122,7 +122,7 @@ The throughput profile is now O(1) per agent instead of O(n²) under the fat agg
 
 The `AuditLedger` aggregate then stitches a cross-stream causal narrative via `correlation_id` chains, giving regulators the unified view they need without coupling the operational write paths.
 
-**Summary of the coupling problem prevented:** The chosen boundary prevents artificial write contention coupling between independent agents, allowing parallel execution without serializing unrelated domain operations. Credit analysis, fraud screening, and compliance checking proceed concurrently on separate streams — the aggregate boundary reflects the domain's natural independence.
+**Summary of the coupling problem prevented:** The chosen boundary prevents artificial write contention coupling between independent agents, allowing parallel execution without serializing unrelated domain operations. Credit analysis, fraud screening, and compliance checking proceed concurrently on separate streams — the aggregate boundary reflects the domain's natural independence. This boundary also improves **team autonomy**: the compliance team can deploy changes to the `ComplianceRecord` aggregate and its logic without needing to coordinate with the team managing the core `LoanApplication`, reducing development friction.
 
 ---
 
@@ -334,8 +334,8 @@ The API response always includes consistency metadata:
 
 The UI renders this as:
 
-- A **subtle staleness indicator** (e.g., a pulsing dot or "Updating…" badge near the credit limit).
-- **Auto-refresh** — the UI polls or subscribes (via WebSocket/SSE) until `is_stale` becomes `false`, then updates the displayed value without user action.
+- **A subtle staleness indicator** (e.g., a pulsing dot or "Updating…" badge near the credit limit).
+- **Auto-refresh via Correlation ID** — When the agent submits the disbursement command, it generates a unique Correlation ID. The UI uses this Correlation ID to specifically poll an endpoint (e.g., `/api/command-status/{correlationId}`) or listen for a WebSocket event tagged with that ID. This guarantees the UI knows exactly when its specific action has been reflected in the read model, which is much more robust than simple polling or timers.
 - **No silent stale reads** — the officer is never shown a number without context. If the projection is lagging, that fact is visible.
 
 ### Projection Handler Idempotency
