@@ -29,14 +29,20 @@ class AgentSessionAggregate(BaseAggregate):
         self.nodes_executed = 0
         self.tool_calls = 0
         self.last_successful_node: str | None = None
+        self.model_version: str | None = None
 
     def assert_session_started(self) -> None:
         if not self.is_started:
             raise PreconditionFailedError(f"Session {self.stream_id} is not started. AgentSessionStarted must be the first event.")
 
+    def assert_model_version(self, version: str) -> None:
+        if self.model_version and self.model_version != version:
+            raise DomainError(f"Model version mismatch. Expected {self.model_version}, got {version}")
+
     def apply_AgentSessionStarted(self, event: AgentSessionStarted) -> None:
         self.is_started = True
         self.context_loaded = True
+        self.model_version = event.model_version
 
     def apply_AgentNodeExecuted(self, event: AgentNodeExecuted) -> None:
         self.nodes_executed += 1
@@ -67,6 +73,7 @@ class AgentSessionAggregate(BaseAggregate):
             "nodes_executed": self.nodes_executed,
             "tool_calls": self.tool_calls,
             "last_successful_node": self.last_successful_node,
+            "model_version": self.model_version,
             "version": self.version,
         }
 
@@ -78,6 +85,7 @@ class AgentSessionAggregate(BaseAggregate):
         self.nodes_executed = state.get("nodes_executed", 0)
         self.tool_calls = state.get("tool_calls", 0)
         self.last_successful_node = state.get("last_successful_node")
+        self.model_version = state.get("model_version")
         self.version = state.get("version", 0)
 
     # Command methods
@@ -88,6 +96,8 @@ class AgentSessionAggregate(BaseAggregate):
 
     def record_node_execution(self, event: AgentNodeExecuted) -> None:
         self.assert_session_started()
+        # No model_version in AgentNodeExecuted according to models? 
+        # Actually models may vary. Let's check models. 
         self.append_event(event)
 
     def record_tool_call(self, event: AgentToolCalled) -> None:

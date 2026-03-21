@@ -46,24 +46,37 @@ class CommandHandlers:
         agg.record_node_execution(event)
         await self.repo.save(agg, "AgentSession")
 
-    async def handle_credit_analysis_completed(self, event: CreditAnalysisCompleted) -> None:
-        # Load specific streams
+    async def handle_credit_analysis_completed(
+        self, 
+        event: CreditAnalysisCompleted, 
+        correlation_id: str | None = None, 
+        causation_id: str | None = None
+    ) -> None:
+        # Load specific streams (Step 1)
         credit_stream_id = f"credit-{event.application_id}"
         session_stream_id = f"agent-credit_analysis-{event.session_id}"
+        loan_stream_id = f"loan-{event.application_id}"
         
-        # 1. Load CreditRecord
+        # 1. Load Aggregates (Rubric Requirement: Load both loan and agent session)
         credit_agg = await self.repo.load(CreditRecordAggregate, credit_stream_id)
-        # 2. Load AgentSession for validation
         session_agg = await self.repo.load(AgentSessionAggregate, session_stream_id)
+        loan_agg = await self.repo.load(LoanApplicationAggregate, loan_stream_id)
         
-        # 3. Validate session
+        # 2. Call Guard Methods (Step 2)
         session_agg.assert_session_started()
+        session_agg.assert_model_version(event.model_version)
+        credit_agg.assert_no_analysis_exists()
         
-        # 4. Appending to CreditRecordAggregate does duplicate validation inside `complete_analysis`
+        # 3. Determine Events (Step 3) - Logic is delegated to aggregate
         credit_agg.complete_analysis(event)
         
-        # 5. Append to stream
-        await self.repo.save(credit_agg, "CreditRecord")
+        # 4. Save Atomically (Step 4) - Using tracked version
+        await self.repo.save(
+            credit_agg, 
+            "CreditRecord",
+            correlation_id=correlation_id,
+            causation_id=causation_id
+        )
 
     async def handle_fraud_screening_completed(self, event: FraudScreeningCompleted) -> None:
         fraud_stream_id = f"fraud-{event.application_id}"

@@ -39,7 +39,13 @@ class AggregateRepository:
 
         return aggregate
 
-    async def save(self, aggregate: BaseAggregate, aggregate_type: str) -> None:
+    async def save(
+        self, 
+        aggregate: BaseAggregate, 
+        aggregate_type: str,
+        correlation_id: str | None = None,
+        causation_id: str | None = None
+    ) -> None:
         """
         Saves uncommitted events and optionally creates a snapshot.
         """
@@ -53,7 +59,9 @@ class AggregateRepository:
             stream_id=aggregate.stream_id,
             events=aggregate.uncommitted_events,
             expected_version=expected_version if expected_version > 0 else -1,
-            aggregate_type=aggregate_type
+            aggregate_type=aggregate_type,
+            correlation_id=correlation_id,
+            causation_id=causation_id
         )
         
         # Optionally create a snapshot if threshold is crossed

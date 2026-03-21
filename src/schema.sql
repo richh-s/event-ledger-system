@@ -31,7 +31,10 @@ CREATE TABLE IF NOT EXISTS event_streams (
 
 CREATE TABLE IF NOT EXISTS projection_checkpoints (
   projection_name  TEXT PRIMARY KEY,
+  shard_key        TEXT NOT NULL DEFAULT 'all',
   last_position    BIGINT NOT NULL DEFAULT 0,
+  owner_node_id    TEXT,
+  lease_expires_at TIMESTAMPTZ,
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

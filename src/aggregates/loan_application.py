@@ -46,24 +46,24 @@ class LoanApplicationAggregate(BaseAggregate):
         elif self.state == ApplicationState.DOCUMENTS_PROCESSED:
             if to_state == ApplicationState.CREDIT_ANALYSIS_REQUESTED:
                 valid = True
-            elif to_state == ApplicationState.CREDIT_ANALYSIS_COMPLETE:
+            elif to_state == ApplicationState.CREDIT_COMPLETE:
                 valid = True
         elif self.state == ApplicationState.CREDIT_ANALYSIS_REQUESTED:
-            if to_state == ApplicationState.CREDIT_ANALYSIS_COMPLETE:
+            if to_state == ApplicationState.CREDIT_COMPLETE:
                 valid = True
-        elif self.state == ApplicationState.CREDIT_ANALYSIS_COMPLETE:
+        elif self.state == ApplicationState.CREDIT_COMPLETE:
             if to_state == ApplicationState.FRAUD_SCREENING_REQUESTED:
                 valid = True
-            elif to_state == ApplicationState.FRAUD_SCREENING_COMPLETE:
+            elif to_state == ApplicationState.FRAUD_COMPLETE:
                 valid = True
         elif self.state == ApplicationState.FRAUD_SCREENING_REQUESTED:
-            if to_state == ApplicationState.FRAUD_SCREENING_COMPLETE:
+            if to_state == ApplicationState.FRAUD_COMPLETE:
                 valid = True
-        elif self.state == ApplicationState.FRAUD_SCREENING_COMPLETE:
+        elif self.state == ApplicationState.FRAUD_COMPLETE:
             if to_state in (ApplicationState.COMPLIANCE_CHECK_REQUESTED, ApplicationState.PENDING_DECISION, ApplicationState.APPROVED, ApplicationState.DECLINED, ApplicationState.REFERRED):
                 valid = True
         elif self.state == ApplicationState.COMPLIANCE_CHECK_REQUESTED:
-            if to_state in (ApplicationState.COMPLIANCE_CHECK_COMPLETE, ApplicationState.DECLINED_COMPLIANCE):
+            if to_state in (ApplicationState.COMPLIANCE_CHECK_COMPLETE, ApplicationState.COMPLIANCE_BLOCKED):
                 valid = True
         elif self.state == ApplicationState.COMPLIANCE_CHECK_COMPLETE:
             if to_state in (ApplicationState.PENDING_DECISION, ApplicationState.APPROVED, ApplicationState.DECLINED):
@@ -76,7 +76,7 @@ class LoanApplicationAggregate(BaseAggregate):
                 valid = True
         
         # Valid from any state
-        if to_state == ApplicationState.DECLINED_COMPLIANCE: 
+        if to_state == ApplicationState.COMPLIANCE_BLOCKED: 
             valid = True
 
         if not valid:

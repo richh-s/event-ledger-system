@@ -11,80 +11,92 @@ from src.exceptions import OptimisticConcurrencyError
 from src.models.events import CreditRecordOpened, CreditAnalysisCompleted, CreditDecision, RiskTier
 
 @pytest.mark.asyncio
-async def test_concurrency_credit_analysis_duplicate_prevention():
-    # Setup test DB (Assuming fixtures or similar pattern, but we can do inline setup)
-    # Using an isolated event store instance if possible or mock, but let's test against actual event_store + DB
-    # The application tests typically expect postgres, we assume `event_store` is injected via a fixture.
-    pass
-
-# We will write the test using a fixture.
-@pytest.mark.asyncio
-async def test_duplicate_analysis_resolution(db: Database):
+async def test_interim_double_decision_concurrency(db: Database):
+    """
+    Interim Sunday Requirement:
+    - two concurrent asyncio tasks
+    - appending to same stream at expected_version=3
+    - exactly one succeeds, one raises OptimisticConcurrencyError
+    - total stream length = 4
+    """
     store = EventStore(db)
     repo = AggregateRepository(store, db)
+    stream_id = "credit-interim-test"
     
-    stream_id = "credit-conc-test-1"
+    from src.models.events import HistoricalProfileConsumed, ExtractedFactsConsumed
     
-    # 1. Initialize CreditRecord with CreditRecordOpened
+    # 1. Initialize to version 3
     agg = CreditRecordAggregate(stream_id)
-    opened = CreditRecordOpened(
-        application_id="conc-test-1", applicant_id="u1", opened_at=datetime.now()
-    )
-    agg.open_record(opened)
+    agg.append_event(CreditRecordOpened.model_construct(
+        application_id="interim", applicant_id="u1", opened_at=datetime.now(),
+        event_type="CreditRecordOpened", event_version=1
+    ))
+    agg.append_event(HistoricalProfileConsumed.model_construct(
+        application_id="interim", session_id="s_hist", fiscal_years_loaded=[2023],
+        has_prior_loans=False, has_defaults=False, revenue_trajectory="UP", data_hash="h1",
+        consumed_at=datetime.now(), event_type="HistoricalProfileConsumed", event_version=1
+    ))
+    agg.append_event(ExtractedFactsConsumed.model_construct(
+        application_id="interim", session_id="s_facts", document_ids_consumed=["d1"],
+        facts_summary="ok", quality_flags_present=False, consumed_at=datetime.now(),
+        event_type="ExtractedFactsConsumed", event_version=1
+    ))
+    
+    assert agg.version == 0 # Version stays at 0 for uncommitted
     await repo.save(agg, "CreditRecord")
+    assert agg.version == 3 # Now version is 3
     
-    # version is now 1.
+    # 2. Setup concurrent tasks
+    dec1 = CreditDecision(risk_tier=RiskTier.LOW, recommended_limit_usd=Decimal("100"), confidence=0.9, rationale="ok")
+    dec2 = CreditDecision(risk_tier=RiskTier.MEDIUM, recommended_limit_usd=Decimal("50"), confidence=0.8, rationale="ok")
     
-    analysis1 = CreditAnalysisCompleted(
-        application_id="conc-test-1", session_id="s1",
-        decision=CreditDecision(risk_tier=RiskTier.LOW, recommended_limit_usd=Decimal("100"), confidence=0.9, rationale="ok"),
-        model_version="v1", model_deployment_id="d1", input_data_hash="h", analysis_duration_ms=10, completed_at=datetime.now()
+    analysis1 = CreditAnalysisCompleted.model_construct(
+        application_id="interim", session_id="s1", decision=dec1, model_version="v1",
+        model_deployment_id="d1", input_data_hash="h", analysis_duration_ms=10, 
+        completed_at=datetime.now(), event_type="CreditAnalysisCompleted", event_version=2
     )
-    
-    analysis2 = CreditAnalysisCompleted(
-        application_id="conc-test-1", session_id="s2",
-        decision=CreditDecision(risk_tier=RiskTier.MEDIUM, recommended_limit_usd=Decimal("50"), confidence=0.8, rationale="ok"),
-        model_version="v1", model_deployment_id="d1", input_data_hash="h", analysis_duration_ms=10, completed_at=datetime.now()
+    analysis2 = CreditAnalysisCompleted.model_construct(
+        application_id="interim", session_id="s2", decision=dec2, model_version="v1",
+        model_deployment_id="d1", input_data_hash="h", analysis_duration_ms=10, 
+        completed_at=datetime.now(), event_type="CreditAnalysisCompleted", event_version=2
     )
-    load_event = asyncio.Event()
+
+    barrier = asyncio.Event()
 
     async def agent_task(analysis_event, is_slow=False):
-        try:
-            # Load agg
-            agent_agg = await repo.load(CreditRecordAggregate, stream_id)
+        # Step 1: Load at version 3
+        agent_agg = await repo.load(CreditRecordAggregate, stream_id)
+        assert agent_agg.version == 3 # Both load v3
+        
+        if is_slow:
+            barrier.set()
+            await asyncio.sleep(0.1) # Wait for fast one to win
+        else:
+            await barrier.wait()
             
-            if is_slow:
-                load_event.set()
-                await asyncio.sleep(0.1) # Let fast task save
-            else:
-                await load_event.wait()
-                
-            agent_agg.complete_analysis(analysis_event)
-            await repo.save(agent_agg, "CreditRecord")
-            return "SUCCESS"
-        except OptimisticConcurrencyError:
-            # Losing agent behavior:
-            # Caught OCC, reloads stream
-            reloaded_agg = await repo.load(CreditRecordAggregate, stream_id)
-            # Detects existing analysis
-            if reloaded_agg.has_analysis:
-                return "OCC_DETECTED_EXIT"
-            return "OCC_BUT_NO_ANALYSIS"
-        except Exception as e:
-            return f"OTHER_ERROR: {str(e)}"
-            
-    # Run them simultaneously
-    results = await asyncio.gather(
-        agent_task(analysis1, is_slow=False), 
-        agent_task(analysis2, is_slow=True)
-    )
-    
-    assert "SUCCESS" in results
-    assert "OCC_DETECTED_EXIT" in results
+        # Step 2: Apply logic
+        agent_agg.complete_analysis(analysis_event)
+        
+        # Step 3: Save at expected_version=3
+        await repo.save(agent_agg, "CreditRecord")
+        return "SUCCESS"
 
-    # Final stream has exactly one analysis
-    final_agg = await repo.load(CreditRecordAggregate, stream_id)
-    events = await store.load_stream(stream_id)
+    # 3. Execute
+    tasks = [
+        agent_task(analysis1, is_slow=False),
+        agent_task(analysis2, is_slow=True)
+    ]
     
-    analysis_events = [e for e in events if e.event_type == "CreditAnalysisCompleted"]
-    assert len(analysis_events) == 1
+    # We expect one SUCCESS and one OptimisticConcurrencyError
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    success_count = sum(1 for r in results if r == "SUCCESS")
+    occ_count = sum(1 for r in results if isinstance(r, OptimisticConcurrencyError))
+    
+    assert success_count == 1
+    assert occ_count == 1
+    
+    # 4. Assert total stream length = 4
+    events = await store.load_stream(stream_id)
+    assert len(events) == 4
+    assert events[-1].stream_position == 4

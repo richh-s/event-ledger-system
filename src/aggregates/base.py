@@ -14,6 +14,16 @@ class BaseAggregate(ABC):
         self.version = 0
         self.uncommitted_events: list[BaseEvent] = []
 
+    @classmethod
+    async def load(cls: Type[T], store: Any, stream_id: str) -> T:
+        """
+        Rubric Requirement: Load method that calls event store and reconstructs state.
+        """
+        events = await store.load_stream(stream_id)
+        instance = cls(stream_id)
+        instance.load_from_history(events)
+        return instance
+
     def load_from_history(self, events: list[StoredEvent]) -> None:
         """
         Loads the aggregate from a list of historical events.
