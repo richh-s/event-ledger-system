@@ -45,6 +45,7 @@ class EventStore:
         if not events:
             return expected_version
 
+        new_version = expected_version
         async with self.db.transaction() as conn:
             # 1. Check stream version
             row = await conn.fetchrow(
@@ -54,6 +55,8 @@ class EventStore:
 
             current_version = 0
             if row:
+                if expected_version == -1:
+                    raise OptimisticConcurrencyError(stream_id, expected_version, row['current_version'])
                 if row['archived_at'] is not None:
                     raise StreamArchivedError(stream_id)
                 current_version = row['current_version']
@@ -74,16 +77,16 @@ class EventStore:
                         stream_id, aggregate_type, new_version
                     )
                 except asyncpg.exceptions.UniqueViolationError:
-                    actual = await conn.fetchrow("SELECT current_version FROM event_streams WHERE stream_id = $1", stream_id)
-                    actual_v = actual["current_version"] if actual else 0
-                    raise OptimisticConcurrencyError(stream_id, expected_version, actual_v)
+                    # Transaction is aborted by PG, we cannot run queries without a savepoint.
+                    # Safely reject the OCC collision natively.
+                    raise OptimisticConcurrencyError(stream_id, expected_version, -1)
             
             # 2. Insert all events
             # Append is strictly append-only; no updates or deletes are ever performed
             for base_event in events:
                 new_version += 1
                 
-                metadata = (base_event.metadata or {}).copy()
+                metadata = dict(base_event.metadata or {})
                 if correlation_id:
                     metadata["correlation_id"] = correlation_id
                 if causation_id:
@@ -123,7 +126,7 @@ class EventStore:
                 new_version, stream_id
             )
 
-            return new_version
+        return new_version
 
     async def load_stream(
         self,
@@ -215,7 +218,9 @@ class EventStore:
     async def stream_version(self, stream_id: str) -> int:
         async with self.db.get_connection() as conn:
             val = await conn.fetchval("SELECT current_version FROM event_streams WHERE stream_id = $1", stream_id)
-            return val if val is not None else -1
+            if val is None:
+                return -1
+            return int(val)
 
     async def archive_stream(self, stream_id: str) -> None:
         async with self.db.get_connection() as conn:

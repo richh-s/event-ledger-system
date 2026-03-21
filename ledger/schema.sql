@@ -1,5 +1,7 @@
 -- The Ledger PostgreSQL Schema
 
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 CREATE TABLE IF NOT EXISTS events (
   event_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   stream_id        TEXT NOT NULL,

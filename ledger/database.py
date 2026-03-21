@@ -5,6 +5,10 @@ from contextlib import asynccontextmanager
 class Database:
     """Async database connection pool manager for the Ledger."""
     def __init__(self, dsn: str):
+        # Enforce SSL for Supabase / external managed DBs if not targeting localhost natively
+        if dsn and "localhost" not in dsn and "sslmode=" not in dsn:
+            dsn += "&sslmode=require" if "?" in dsn else "?sslmode=require"
+            
         self.dsn = dsn
         self._pool: asyncpg.Pool | None = None
 
