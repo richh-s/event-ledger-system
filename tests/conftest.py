@@ -4,11 +4,11 @@ import asyncpg
 import asyncio
 from typing import AsyncGenerator
 
-from ledger.database import Database
+from src.database import Database
 
 # Use environment variable for CI flexibility, fallback to standard localhost
-TEST_DB_DSN = os.getenv("TEST_DB_DSN", "postgres://postgres:postgres@localhost:5432/ledger_test")
-DEFAULT_DB_DSN = os.getenv("DEFAULT_DB_DSN", "postgres://postgres:postgres@localhost:5432/postgres")
+TEST_DB_DSN = os.getenv("TEST_DB_DSN", "postgres://postgres:postgres@localhost:5434/ledger_test")
+DEFAULT_DB_DSN = os.getenv("DEFAULT_DB_DSN", "postgres://postgres:postgres@localhost:5434/postgres")
 
 
 @pytest.fixture(scope="session")
@@ -38,7 +38,7 @@ async def setup_test_db() -> AsyncGenerator[Database, None]:
     await db.connect()
     
     import pathlib
-    schema_path = pathlib.Path(__file__).parent.parent / "ledger" / "schema.sql"
+    schema_path = pathlib.Path(__file__).parent.parent / "src" / "schema.sql"
     await db.init_schema(str(schema_path))
     
     yield db
@@ -58,5 +58,5 @@ async def setup_test_db() -> AsyncGenerator[Database, None]:
 async def db(setup_test_db: Database) -> Database:
     """Truncates all tables before each test to guarantee isolation."""
     async with setup_test_db.get_connection() as conn:
-        await conn.execute("TRUNCATE events, event_streams, outbox, projection_checkpoints RESTART IDENTITY CASCADE")
+        await conn.execute("TRUNCATE events, event_streams, outbox, projection_checkpoints, snapshots RESTART IDENTITY CASCADE")
     return setup_test_db

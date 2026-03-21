@@ -1,0 +1,10 @@
+{
+  "site_package_search_strategy": "pep561",
+  "source_directories": [
+    { "import_root": ".", "source": "src" },
+    { "import_root": ".", "source": "tests" }
+  ],
+  "search_path": [
+    ".venv/lib/python3.12/site-packages"
+  ]
+}

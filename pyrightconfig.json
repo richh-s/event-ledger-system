@@ -1,0 +1,9 @@
+{
+  "include": ["src", "tests", "manual_test.py"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "extraPaths": ["."]
+}
