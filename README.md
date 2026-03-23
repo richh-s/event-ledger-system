@@ -9,6 +9,23 @@ The Ledger is an event-sourced, append-only system of record for the Apex high-f
 - **Snapshot Integration**: High-performance aggregate reconstruction using snapshots.
 - **Transactional Outbox**: Guaranteed event delivery for downstream projections.
 
+## 🤖 Phase 2 AI Agents (Score 5: Master Thinker)
+
+The system includes a sophisticated AI agent chain implemented with **LangGraph**, adhering to the highest architectural standards for resilience and auditability.
+
+### Core Agents
+- **Credit Analysis Agent**: Performs deep risk assessment using LLMs with automated financial data integration.
+- **Fraud Detection Agent**: Screens for anomalies and suspicious historical patterns.
+- **Compliance Agent**: Executes 6+ deterministic jurisdiction and AML rules.
+- **Decision Orchestrator**: Synthesizes all agent outputs into a final approval or decline.
+
+### Master Thinker Features
+- **Strict Idempotency**: Agents audit existing domain streams to prevent duplicate writes on retry.
+- **Write-Before-Execute (WBE)**: `AgentSessionStarted` and initiation events are persisted **before** any logic or tool calls.
+- **Optimistic Concurrency (OCC)**: Built-in retry loops resolve database write contention automatically.
+- **Policy Authority**: Deterministic Python rules override LLM recommendations (e.g., blocking hallucinations).
+- **Session Recovery**: Failed agent sessions are automatically detected and resume from the last known good state.
+
 ## 🛠 Installation
 
 The project uses `uv` for lightning-fast dependency management.
@@ -25,36 +42,38 @@ The project uses `uv` for lightning-fast dependency management.
    ```
 
 3. **Set up Environment**:
-   Duplicate `.env.example` as `.env` and configure your PostgreSQL credentials.
+   Duplicate `.env.example` as `.env` and configure your credentials.
 
-## 🗄 Migrations
+## 🗄 Migrations & Seed Data
 
-Apply the PostgreSQL schema to initialize the Ledger tables:
-
-```bash
-uv run python manual_test.py --migrate
-```
-*(Alternatively, run `psql -f src/schema.sql` against your target database).*
+1. **Initialize Schema**:
+   ```bash
+   uv run python manual_test.py --migrate
+   ```
+2. **Ingest Seed Data**:
+   ```bash
+   uv run python ingest_seed_data.py
+   ```
 
 ## 🧪 Running Tests
 
-The test suite covers domain logic, concurrency, and snapshotting.
-
+### Phase 1: Core Ledger
 ```bash
 uv run pytest
 ```
 
-Specific test files:
-- `tests/test_aggregates.py`: Domain rules and state machines.
-- `tests/test_concurrency.py`: Double-decision race condition test.
-- `tests/test_gas_town.py`: Agent session tracking.
-- `tests/test_snapshots.py`: Snapshot creation and restoration.
+### Phase 2: AI Agent Chain (Score 5 Audit)
+To run the full 8-step agent chain with advanced proofs (OCC, WBE, Idempotency, etc.):
+```bash
+uv run python manual_test_phase2_ai.py
+```
 
 ## 🛡 Business Rules Enforced
 1. **Rule #1**: Rigid state machine for `LoanApplication`.
 2. **Rule #2**: `AgentSessionStarted` must be the first event for any AI session.
-3. **Rule #3**: No duplicate credit analysis per application.
+3. **Rule #3**: No duplicate credit analysis per application (Strict Idempotency).
 4. **Rule #4**: Fraud score range validation (0.0–1.0).
 5. **Rule #5**: Compliance hard blocks prevent further evaluations.
 6. **Rule #6**: Application approval depends on compliance and credit status.
 7. **Rule #7**: Quality flags from extraction propagate to decision nodes.
+8. **Rule #8**: System rules (Python) override AI hallucinations.
