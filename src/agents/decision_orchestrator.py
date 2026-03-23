@@ -126,8 +126,10 @@ Return JSON: {"recommendation": "...", "executive_summary": "...", "key_risks": 
         rec = (state["orchestrator_decision"] or {}).get("recommendation", "REFER")
         violations = []
         
-        # Rule 1: Compliance BLOCKED -> mandatory DECLINE
+        # Rule 1: Compliance BLOCKED -> mandatory DECLINE (Master Thinker Authority)
         if state["compliance_record"].get("verdict") == "BLOCKED":
+            if rec == "APPROVE":
+                print(f"    [Policy] LLM suggested APPROVE → Blocked due to compliance rule")
             rec = "DECLINE"
             violations.append("COMPLIANCE_HARD_BLOCK")
             
