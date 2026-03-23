@@ -28,3 +28,4 @@ htmlcov/
 # Local data
 database.db
 *.log
+starter/

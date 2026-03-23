@@ -19,6 +19,9 @@ from src.models.events import (
     HumanReviewCompleted,
     ApplicationApproved,
     ApplicationDeclined,
+    CreditAnalysisCompleted,
+    FraudScreeningCompleted,
+    ComplianceCheckCompleted,
     DomainError,
 )
 
@@ -86,14 +89,28 @@ class LoanApplicationAggregate(BaseAggregate):
         self.state = ApplicationState.SUBMITTED
 
     def apply_DocumentUploadRequested(self, event: DocumentUploadRequested) -> None:
-        if self.state != ApplicationState.DOCUMENTS_UPLOADED:
-            self.state = ApplicationState.DOCUMENTS_PENDING
+        self.state = ApplicationState.DOCUMENTS_PENDING
 
     def apply_DocumentUploaded(self, event: DocumentUploaded) -> None:
         self.state = ApplicationState.DOCUMENTS_UPLOADED
 
     def apply_CreditAnalysisRequested(self, event: CreditAnalysisRequested) -> None:
         self.state = ApplicationState.CREDIT_ANALYSIS_REQUESTED
+
+    def apply_CreditAnalysisCompleted(self, event: CreditAnalysisCompleted) -> None:
+        self.state = ApplicationState.CREDIT_COMPLETE
+
+    def apply_FraudScreeningRequested(self, event: FraudScreeningRequested) -> None:
+        self.state = ApplicationState.FRAUD_SCREENING_REQUESTED
+
+    def apply_FraudScreeningCompleted(self, event: FraudScreeningCompleted) -> None:
+        self.state = ApplicationState.FRAUD_COMPLETE
+
+    def apply_ComplianceCheckRequested(self, event: ComplianceCheckRequested) -> None:
+        self.state = ApplicationState.COMPLIANCE_CHECK_REQUESTED
+
+    def apply_ComplianceCheckCompleted(self, event: ComplianceCheckCompleted) -> None:
+        self.state = ApplicationState.COMPLIANCE_CHECK_COMPLETE
 
     # ... Other transitions managed implicitly by decisions or direct calls
     def apply_DecisionGenerated(self, event: DecisionGenerated) -> None:
@@ -108,11 +125,26 @@ class LoanApplicationAggregate(BaseAggregate):
     def apply_HumanReviewRequested(self, event: HumanReviewRequested) -> None:
         self.state = ApplicationState.PENDING_HUMAN_REVIEW
 
+    def apply_CreditAnalysisCompleted(self, event: CreditAnalysisCompleted) -> None:
+        self.state = ApplicationState.CREDIT_COMPLETE
+
+    def apply_FraudScreeningRequested(self, event: FraudScreeningRequested) -> None:
+        self.state = ApplicationState.FRAUD_SCREENING_REQUESTED
+
+    def apply_FraudScreeningCompleted(self, event: FraudScreeningCompleted) -> None:
+        self.state = ApplicationState.FRAUD_COMPLETE
+
+    def apply_ComplianceCheckRequested(self, event: ComplianceCheckRequested) -> None:
+        self.state = ApplicationState.COMPLIANCE_CHECK_REQUESTED
+
+    def apply_ComplianceCheckCompleted(self, event: ComplianceCheckCompleted) -> None:
+        self.state = ApplicationState.COMPLIANCE_CHECK_COMPLETE
+
     def apply_HumanReviewCompleted(self, event: HumanReviewCompleted) -> None:
         if event.final_decision == "APPROVED":
-            pass # wait for ApplicationApproved
+            self.state = ApplicationState.PENDING_DECISION # Go back for approval
         elif event.final_decision == "DECLINED":
-            pass # wait for ApplicationDeclined
+            self.state = ApplicationState.PENDING_DECISION # Go back for decline
 
     def get_state(self) -> dict[str, Any]:
         return {
@@ -166,6 +198,33 @@ class LoanApplicationAggregate(BaseAggregate):
 
     def complete_human_review(self, event: HumanReviewCompleted) -> None:
         self._assert_valid_transition(ApplicationState.PENDING_HUMAN_REVIEW) # Or any state it targets
+        self.append_event(event)
+
+    def record_credit_analysis(self, event: CreditAnalysisCompleted) -> None:
+        self._assert_valid_transition(ApplicationState.CREDIT_COMPLETE)
+        self.append_event(event)
+
+    def record_fraud_screening(self, event: FraudScreeningCompleted) -> None:
+        self._assert_valid_transition(ApplicationState.FRAUD_COMPLETE)
+        self.append_event(event)
+
+    def record_compliance_check(self, event: ComplianceCheckCompleted) -> None:
+        self._assert_valid_transition(ApplicationState.COMPLIANCE_CHECK_COMPLETE)
+        self.append_event(event)
+
+    def record_credit_request(self, event: CreditAnalysisRequested) -> None:
+        self._assert_valid_transition(ApplicationState.CREDIT_ANALYSIS_REQUESTED)
+        self.append_event(event)
+
+    def apply_DocumentsProcessed(self, event: Any = None) -> None:
+        self.state = ApplicationState.DOCUMENTS_PROCESSED
+
+    def record_documents_processed(self) -> None:
+        self._assert_valid_transition(ApplicationState.DOCUMENTS_PROCESSED)
+        self.state = ApplicationState.DOCUMENTS_PROCESSED
+
+    def record_decision_request(self, event: DecisionRequested) -> None:
+        self._assert_valid_transition(ApplicationState.PENDING_DECISION)
         self.append_event(event)
 
     def decline(self, event: ApplicationDeclined) -> None:
