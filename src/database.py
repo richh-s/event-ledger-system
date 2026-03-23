@@ -16,6 +16,15 @@ class Database:
         """Initializes the asyncpg connection pool."""
         if not self._pool:
             import json
+            import ssl
+            
+            ssl_ctx = None
+            if "sslmode=require" in self.dsn:
+                # asyncpg requires an SSLContext when using SSL
+                ssl_ctx = ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+            
             async def init(con):
                 await con.set_type_codec(
                     'jsonb',
@@ -23,6 +32,7 @@ class Database:
                     decoder=json.loads,
                     schema='pg_catalog',
                 )
+            
             # We enforce standard settings here. The caller should pass
             # a proper DSN, e.g., 'postgres://user:pass@host/db'
             self._pool = await asyncpg.create_pool(
@@ -30,6 +40,7 @@ class Database:
                 min_size=1,
                 max_size=10,
                 init=init,
+                ssl=ssl_ctx,
                 statement_cache_size=0 # DISABLE statement cache for PgBouncer/Supabase
             )
 
