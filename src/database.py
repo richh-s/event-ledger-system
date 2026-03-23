@@ -29,7 +29,8 @@ class Database:
                 self.dsn,
                 min_size=1,
                 max_size=10,
-                init=init
+                init=init,
+                statement_cache_size=0 # DISABLE statement cache for PgBouncer/Supabase
             )
 
     async def disconnect(self):
