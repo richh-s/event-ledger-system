@@ -193,7 +193,25 @@ async def main():
         print("❌ Decision was NOT requested.")
         return
 
-    # 8. Final Audit
+    # 9. EXTRA PROOF: Policy Override (LLM APPROVE -> System DECLINE)
+    print("\n[ADVANCED PROOF] TEST 6: Policy Override (LLM APPROVE -> System DECLINE)...")
+    mock_app_id = f"POL-{uuid4().hex[:4].upper()}"
+    # Force state where LLM suggests APPROVE but Compliance is BLOCKED
+    mock_state = {
+        "application_id": mock_app_id,
+        "credit_analysis": {"risk_tier": "LOW", "confidence": 0.95},
+        "fraud_screening": {"fraud_score": 0.05},
+        "compliance_record": {"verdict": "BLOCKED"},
+        "orchestrator_decision": {"recommendation": "APPROVE", "executive_summary": "LLM says everything looks great!"},
+        "hard_constraints_violated": []
+    }
+    # Run the authority layer (node_constraints) logic directly
+    await decision_agent._node_constraints(mock_state)
+    print(f"    [Audit] Final verdict for {mock_app_id}: {mock_state['final_verdict']}")
+    if mock_state["final_verdict"] == "DECLINE":
+        print("✅ Policy Authority Proof: System rules successfully overrode LLM recommendation.")
+
+    # 10. Final Audit
     print("\n" + "="*50 + "\n✅ Verification Complete.")
     
     # Cleanup
