@@ -20,20 +20,11 @@ from anthropic import AsyncAnthropic
 from langgraph.graph import StateGraph, END
 
 # We use the existing models and exceptions from src
-from src.event_store import EventStore
-from src.models import BaseEvent
+from src.models import BaseEvent, AgentEvent
 from src.exceptions import OptimisticConcurrencyError
 
 LANGGRAPH_VERSION = "1.0.0"
 MAX_OCC_RETRIES = 5
-
-class AgentEvent(BaseEvent):
-    """Generic event for agent sessions and domain triggers."""
-    model_config = ConfigDict(frozen=False)
-    payload: Dict[str, Any] = Field(default_factory=dict)
-
-    def to_payload(self) -> Dict[str, Any] :
-        return self.payload
 
 class BaseApexAgent(ABC):
     """
@@ -44,7 +35,7 @@ class BaseApexAgent(ABC):
         self, 
         agent_id: str, 
         agent_type: str, 
-        store: EventStore, 
+        store: Any, 
         registry: Any, 
         client: AsyncAnthropic, 
         model: str = "anthropic/claude-3.5-sonnet"

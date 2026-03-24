@@ -501,6 +501,15 @@ class PackageReadyForAnalysis(BaseEvent):
 # ─── AGGREGATE 3: AGENT SESSION ──────────────────────────────────────────────
 # stream: "agent-{agent_type}-{session_id}"
 
+class AgentEvent(BaseEvent):
+    """Generic event for agent sessions and domain triggers."""
+    model_config = ConfigDict(frozen=False)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.payload
+
+
 class AgentSessionStarted(BaseEvent):
     model_config = ConfigDict(frozen=True)
     event_type: str = "AgentSessionStarted"
@@ -563,6 +572,17 @@ class AgentToolCalled(BaseEvent):
     tool_duration_ms: int
     called_at: datetime
 
+class AgentContextLoaded(BaseEvent):
+    """Memory Snapshot: Invariant that context MUST be loaded before decisions."""
+    model_config = ConfigDict(frozen=True)
+    event_type: str = "AgentContextLoaded"
+    session_id: str
+    agent_type: AgentType
+    context_source: str # e.g. "loan-APP123"
+    context_version: int 
+    context_hash: str
+    loaded_at: datetime
+
 class AgentOutputWritten(BaseEvent):
     """Agent appended its result events to domain aggregate streams."""
     model_config = ConfigDict(frozen=True)
@@ -570,6 +590,7 @@ class AgentOutputWritten(BaseEvent):
     session_id: str
     agent_type: AgentType
     application_id: str
+    context_event_id: str # REQUIRED: Must reference an AgentContextLoaded event in this session
     events_written: list[dict]
     output_summary: str
     written_at: datetime
@@ -808,6 +829,7 @@ EVENT_REGISTRY: dict[str, type[BaseEvent]] = {
     "AgentInputValidationFailed": AgentInputValidationFailed,
     "AgentNodeExecuted": AgentNodeExecuted,
     "AgentToolCalled": AgentToolCalled,
+    "AgentContextLoaded": AgentContextLoaded,
     "AgentOutputWritten": AgentOutputWritten,
     "AgentSessionCompleted": AgentSessionCompleted,
     "AgentSessionFailed": AgentSessionFailed,

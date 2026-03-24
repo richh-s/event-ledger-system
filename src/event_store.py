@@ -8,6 +8,13 @@ from .database import Database
 from .exceptions import OptimisticConcurrencyError, StreamArchivedError
 
 
+from src.upcasting.registry import registry
+from src.upcasting.upcasters import initialize_upcasters # Ensures upcasters register
+
+# Auto-initialize on import
+initialize_upcasters()
+
+
 class EventStore:
     """
     The sole source of truth; all system state must be derived from events.
@@ -16,16 +23,10 @@ class EventStore:
 
     def __init__(self, db: Database):
         self.db = db
-        self._upcasters: list[Callable[[StoredEvent], StoredEvent]] = []
-
-    def register_upcaster(self, upcaster: Callable[[StoredEvent], StoredEvent]):
-        """Registers a function hook to upgrade events on read."""
-        self._upcasters.append(upcaster)
 
     def _apply_upcasters(self, event: StoredEvent) -> StoredEvent:
-        for upcast in self._upcasters:
-            event = upcast(event)
-        return event
+        """Phase 4: Uses the centralized UpcasterRegistry to evolve event schemas."""
+        return registry.upcast(event)
 
     async def append(
         self,
@@ -35,7 +36,7 @@ class EventStore:
         correlation_id: str | None = None,
         causation_id: str | None = None,
         aggregate_type: str | None = None,  # Required when creating a new stream
-    ) -> int:
+    ) -> list[StoredEvent]:
         """
         Atomically appends events to stream_id natively supporting batched insertion
         for high-frequency streams like AgentSession.
@@ -43,9 +44,9 @@ class EventStore:
         Writes to outbox in same transaction.
         """
         if not events:
-            return expected_version
+            return []
 
-        new_version = expected_version
+        inserted_events: list[StoredEvent] = []
         async with self.db.transaction() as conn:
             # 1. Check stream version
             row = await conn.fetchrow(
@@ -77,12 +78,9 @@ class EventStore:
                         stream_id, aggregate_type, new_version
                     )
                 except asyncpg.exceptions.UniqueViolationError:
-                    # Transaction is aborted by PG, we cannot run queries without a savepoint.
-                    # Safely reject the OCC collision natively.
                     raise OptimisticConcurrencyError(stream_id, expected_version, -1)
             
             # 2. Insert all events
-            # Append is strictly append-only; no updates or deletes are ever performed
             for base_event in events:
                 new_version += 1
                 
@@ -94,17 +92,33 @@ class EventStore:
 
                 event_id = uuid.uuid4()
                 
-                await conn.execute(
+                # Insert and get global_position
+                row = await conn.fetchrow(
                     """
                     INSERT INTO events 
                     (event_id, stream_id, stream_position, event_type, event_version, payload, metadata)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING global_position, recorded_at
                     """,
                     event_id, stream_id, new_version, base_event.event_type, 
                     base_event.event_version, base_event.to_payload(), metadata
                 )
 
-                # 3. Insert outbox rows
+                # 3. Create StoredEvent for return
+                stored_event = StoredEvent(
+                    event_id=event_id,
+                    stream_id=stream_id,
+                    stream_position=new_version,
+                    global_position=row['global_position'],
+                    event_type=base_event.event_type,
+                    event_version=base_event.event_version,
+                    payload=base_event.to_payload(),
+                    metadata=metadata,
+                    recorded_at=row['recorded_at']
+                )
+                inserted_events.append(stored_event)
+
+                # 4. Insert outbox rows
                 outbox_payload = {
                     "stream_id": stream_id,
                     "event_type": base_event.event_type,
@@ -120,13 +134,13 @@ class EventStore:
                     event_id, "event_bus", outbox_payload
                 )
 
-            # 4. Update stream version (once after batch)
+            # 5. Update stream version (once after batch)
             await conn.execute(
                 "UPDATE event_streams SET current_version = $1 WHERE stream_id = $2",
                 new_version, stream_id
             )
 
-        return new_version
+        return inserted_events
 
     async def load_stream(
         self,

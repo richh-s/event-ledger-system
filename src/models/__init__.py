@@ -3,6 +3,7 @@ from .events import (
     StoredEvent,
     StreamMetadata,
     ApplicationSubmitted,
+    AgentEvent,
     # Add other common events if needed
 )
 
@@ -11,4 +12,5 @@ __all__ = [
     "StoredEvent",
     "StreamMetadata",
     "ApplicationSubmitted",
+    "AgentEvent",
 ]
