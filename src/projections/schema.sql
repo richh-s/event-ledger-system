@@ -62,6 +62,35 @@ CREATE TABLE IF NOT EXISTS agent_performance_ledger (
     PRIMARY KEY (agent_id, model_version)
 );
 
+-- Projection 4: AgentDecisionTrace — Links decisions back to the causal agent session
+CREATE TABLE IF NOT EXISTS agent_decision_trace (
+    application_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    model_version TEXT,
+    graph_version TEXT,
+    input_hash TEXT,
+    output_summary TEXT,
+    llm_cost_usd DECIMAL(18, 6),
+    duration_ms BIGINT,
+    recorded_at TIMESTAMPTZ NOT NULL,
+    global_position BIGINT NOT NULL,
+    correlation_id TEXT,
+    PRIMARY KEY (application_id, session_id, global_position)
+);
+
+-- Projection 5: AuditRegistryView — Current status of integrity for all streams
+CREATE TABLE IF NOT EXISTS audit_registry_view (
+    stream_id TEXT PRIMARY KEY,
+    aggregate_type TEXT NOT NULL,
+    last_verified_version BIGINT,
+    last_verified_at TIMESTAMPTZ,
+    integrity_hash TEXT,
+    events_verified_count BIGINT DEFAULT 0,
+    check_status TEXT DEFAULT 'PENDING',
+    last_correlation_id TEXT
+);
+
 -- ============================================================================
 -- Infrastructure Tables
 -- ============================================================================

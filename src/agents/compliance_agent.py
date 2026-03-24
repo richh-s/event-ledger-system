@@ -5,13 +5,22 @@ Score 5 (Master Thinker) Compliance Agent.
 Deterministic rule engine (no LLM).
 Required node sequence: validate_inputs -> open_aggregate_record -> rule nodes -> write_output.
 """
-from __future__ import annotations
 import time
+import hashlib
+import json
 from typing import TypedDict, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from datetime import datetime
 
 from .base_agent import BaseApexAgent
+from src.models import (
+    ComplianceCheckInitiated,
+    ComplianceRulePassed,
+    ComplianceRuleFailed,
+    ComplianceCheckCompleted,
+    DecisionRequested,
+    ApplicationDeclined
+)
 
 class ComplianceState(TypedDict):
     application_id: str
@@ -80,20 +89,26 @@ class ComplianceAgent(BaseApexAgent):
         t0 = time.time()
         app_id = state["application_id"]
         
-        event = {
-            "event_type": "ComplianceCheckInitiated",
-            "event_version": 1,
-            "payload": {
-                "application_id": app_id,
-                "session_id": self.session_id,
-                "initiated_at": datetime.utcnow().isoformat()
-            }
-        }
-        await self._append_stream(f"compliance-{app_id}", event)
+        evt = ComplianceCheckInitiated(
+            application_id=app_id,
+            session_id=self.session_id,
+            regulation_set_version="reg-2024-v2",
+            rules_to_evaluate=["KYC", "AML", "SANCTIONS"],
+            initiated_at=datetime.utcnow()
+        )
+        await self._append_stream_event(f"compliance-{app_id}", evt)
         
+        # 1b. Mem-Snapshot: LOAD CONTEXT (Rule 2)
         # Load registry profile for rules
         profile = await self.registry.get_company(state["applicant_id"])
         state["company_profile"] = profile.__dict__ if profile else {}
+        
+        # Record context loaded (Audit Invariant)
+        await self._record_context_loaded(
+            source=f"crm-companies/{state['applicant_id']}",
+            version=1,
+            content_hash=hashlib.sha256(json.dumps(state["company_profile"]).encode()).hexdigest()
+        )
         
         ms = int((time.time() - t0) * 1000)
         await self._record_node_execution("open_aggregate_record", ["applicant_id"], ["compliance_stream_opened", "profile"], ms)
@@ -163,28 +178,66 @@ class ComplianceAgent(BaseApexAgent):
         state["overall_verdict"] = verdict
         
         # 1. Domain Events (6 rules)
-        # Check idempotency for the completion event to avoid duplicates
-        if not await self.is_event_already_present(f"compliance-{app_id}", "ComplianceCheckCompleted"):
-            for r in state["rules_results"]:
-                evt_type = "ComplianceRulePassed" if r["passed"] else "ComplianceRuleFailed"
-                await self._append_stream(f"compliance-{app_id}", {
-                    "event_type": evt_type, "event_version": 1, 
-                    "payload": {"rule_id": r["rule"], "rule_name": r["name"], "timestamp": datetime.utcnow().isoformat()}
-                })
-                
-            await self._append_stream(f"compliance-{app_id}", {
-                "event_type": "ComplianceCheckCompleted", "event_version": 1,
-                "payload": {"verdict": verdict, "completed_at": datetime.utcnow().isoformat()}
-            })
-        else:
-            print(f"    [Idempotency] 'ComplianceCheckCompleted' already exists for {app_id}. Skipping domain writes.")
+        # Rule of thumb: decisions MUST follow AgentContextLoaded and point back to its event_id (causation_id)
+        for r in state["rules_results"]:
+            if r["passed"]:
+                evt = ComplianceRulePassed(
+                    application_id=app_id,
+                    session_id=self.session_id,
+                    rule_id=r["rule"], 
+                    rule_name=r["name"], 
+                    rule_version="1.0",
+                    evidence_hash=hashlib.sha256(b"compliance-evidence").hexdigest(),
+                    evaluation_notes="No red flags found",
+                    evaluated_at=datetime.utcnow()
+                )
+            else:
+                evt = ComplianceRuleFailed(
+                    application_id=app_id,
+                    session_id=self.session_id,
+                    rule_id=r["rule"], 
+                    rule_name=r["name"], 
+                    rule_version="1.0",
+                    failure_reason="Failed automated check",
+                    is_hard_block=True if r.get("severity") == "HIGH" else False,
+                    remediation_available=False,
+                    evidence_hash=hashlib.sha256(b"compliance-failure").hexdigest(),
+                    evaluated_at=datetime.utcnow()
+                )
+            
+            await self._append_stream_event(f"compliance-{app_id}", evt)
+            
+        final_evt = ComplianceCheckCompleted(
+            application_id=app_id,
+            session_id=self.session_id,
+            rules_evaluated=len(state["rules_results"]),
+            rules_passed=len([r for r in state["rules_results"] if r["passed"]]),
+            rules_failed=len([r for r in state["rules_results"] if not r["passed"]]),
+            rules_noted=0,
+            has_hard_block=state["hard_block"],
+            overall_verdict=verdict, 
+            completed_at=datetime.utcnow()
+        )
+        await self._append_stream_event(f"compliance-{app_id}", final_evt)
         
         # 2. Trigger Next Agent
-        next_event = "ApplicationDeclined" if verdict == "BLOCKED" else "DecisionRequested"
-        await self._append_stream(f"loan-{app_id}", {
-            "event_type": next_event, "event_version": 1,
-            "payload": {"application_id": app_id, "reason": "Compliance block" if verdict == "BLOCKED" else "Compliance cleared"}
-        })
+        if verdict == "BLOCKED":
+            trigger_evt = ApplicationDeclined(
+                application_id=app_id, 
+                decline_reasons=["Compliance block: fails essential regulatory checks"],
+                declined_by=self.agent_id,
+                adverse_action_notice_required=True,
+                declined_at=datetime.utcnow()
+            )
+        else:
+            trigger_evt = DecisionRequested(
+                application_id=app_id, 
+                requested_at=datetime.utcnow(),
+                all_analyses_complete=True,
+                triggered_by_event_id=self.causation_id
+            )
+            
+        await self._append_stream_event(f"loan-{app_id}", trigger_evt)
         
         # 3. AgentOutputWritten
         written = [{"stream_id": f"compliance-{app_id}", "event_type": "ComplianceCheckCompleted"}]
