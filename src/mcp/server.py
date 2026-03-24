@@ -54,7 +54,7 @@ async def complete_human_review(application_id: str, verdict: str, reason: str) 
 
 
 # ==============================================================================
-# RESOURCES (5 READ-SIDE) — spec-aligned projection queries
+# RESOURCES (6 READ-SIDE) — spec-aligned projection queries
 # ==============================================================================
 
 # 1. ledger://applications/{id} → ApplicationSummary
@@ -66,26 +66,39 @@ async def get_application_summary(id: str) -> str:
 
 # 2. ledger://applications/{id}/compliance → ComplianceAuditView
 @mcp.resource("ledger://applications/{id}/compliance")
-async def get_compliance(id: str) -> str:
-    """Current compliance rule verdicts for an application."""
-    data = await resources.get_compliance_current(id)
+async def get_compliance(id: str, as_of: int | None = None) -> str:
+    """
+    Current compliance rule verdicts for an application.
+    Supports ?as_of={global_position} for temporal queries.
+    """
+    if as_of is not None:
+        data = await resources.get_compliance_at(id, as_of)
+    else:
+        data = await resources.get_compliance_current(id)
     return json.dumps(data, indent=2, default=str)
 
-# 3. ledger://agents/{id}/performance → AgentPerformanceLedger
+# 3. ledger://applications/{id}/audit-trail → direct event store read (exception)
+@mcp.resource("ledger://applications/{id}/audit-trail")
+async def get_application_audit_trail(id: str) -> str:
+    """Raw, immutable event stream for an application (direct event store read)."""
+    data = await resources.get_application_audit_trail(id)
+    return json.dumps(data, indent=2, default=str)
+
+# 4. ledger://agents/{id}/performance → AgentPerformanceLedger
 @mcp.resource("ledger://agents/{id}/performance")
 async def get_agent_performance(id: str) -> str:
     """Aggregated performance metrics per model version for an agent."""
     data = await resources.get_agent_performance(id)
     return json.dumps(data, indent=2, default=str)
 
-# 4. ledger://agents/{id}/sessions/{session_id} → direct stream read
+# 5. ledger://agents/{id}/sessions/{session_id} → direct stream read (exception)
 @mcp.resource("ledger://agents/{id}/sessions/{session_id}")
 async def get_session_trace(id: str, session_id: str) -> str:
-    """Agent session event stream (direct event store read)."""
+    """Isolated event stream for a specific agent session."""
     data = await resources.get_agent_session_trace(session_id)
     return json.dumps(data, indent=2, default=str)
 
-# 5. ledger://ledger/health → projection lag + DLQ
+# 6. ledger://ledger/health → projection lag + DLQ
 @mcp.resource("ledger://ledger/health")
 async def get_system_health() -> str:
     """Projection lag metrics and dead letter queue count."""

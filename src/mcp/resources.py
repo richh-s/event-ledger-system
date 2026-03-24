@@ -5,7 +5,7 @@ from src.database import Database
 from src.event_store import EventStore
 
 # ============================================================================
-# MCP Resource Implementations (5 read-only resources)
+# MCP Resource Implementations (6 read-only resources)
 # ============================================================================
 
 
@@ -61,8 +61,39 @@ async def get_compliance_at(application_id: str, as_of_position: int):
         }
 
 
+async def get_application_audit_trail(application_id: str):
+    """Resource 3: ledger://applications/{id}/audit-trail → direct stream read."""
+    from src.database import get_db
+    db = get_db()
+    store = EventStore(db)
+
+    # Justified exception: read all events for this application directly from store
+    # Stream for loan applications is loan-{id}
+    stream_id = f"loan-{application_id}"
+    events = await store.load_stream(stream_id)
+
+    if not events:
+        return {"error": "Application stream not found"}
+
+    return {
+        "application_id": application_id,
+        "stream_id": stream_id,
+        "event_count": len(events),
+        "events": [
+            {
+                "event_id": str(e.event_id),
+                "event_type": e.event_type,
+                "payload": e.payload,
+                "recorded_at": str(e.recorded_at),
+                "global_position": e.global_position
+            }
+            for e in events
+        ]
+    }
+
+
 async def get_agent_performance(agent_id: str):
-    """Resource 3: ledger://agents/{id}/performance → AgentPerformanceLedger."""
+    """Resource 4: ledger://agents/{id}/performance → AgentPerformanceLedger."""
     from src.database import get_db
     db = get_db()
     async with db.get_connection() as conn:
@@ -76,7 +107,7 @@ async def get_agent_performance(agent_id: str):
 
 
 async def get_agent_session_trace(session_id: str):
-    """Resource 4: ledger://agents/{id}/sessions/{session_id} → direct stream read."""
+    """Resource 5: ledger://agents/{id}/sessions/{session_id} → direct stream read."""
     from src.database import get_db
     db = get_db()
     store = EventStore(db)
@@ -112,7 +143,7 @@ async def get_agent_session_trace(session_id: str):
 
 
 async def get_health_metrics():
-    """Resource 5: ledger://ledger/health → projection lag + DLQ count."""
+    """Resource 6: ledger://ledger/health → projection lag + DLQ count."""
     from src.database import get_db
     db = get_db()
     async with db.get_connection() as conn:
