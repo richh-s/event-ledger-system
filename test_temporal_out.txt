@@ -1,0 +1,76 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/aman/Desktop/projects/10academy/event-ledger-system
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-1.3.0, Faker-25.9.2, typeguard-2.13.3, langsmith-0.7.22
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=session, asyncio_default_test_loop_scope=session
+collected 1 item
+
+tests/test_temporal_queries.py F                                         [100%]
+
+=================================== FAILURES ===================================
+_________________________ test_as_of_temporal_timeline _________________________
+
+infra = (<src.database.Database object at 0x119b29d30>, <src.event_store.EventStore object at 0x119b29a60>)
+
+    @pytest.mark.asyncio
+    async def test_as_of_temporal_timeline(infra):
+        db, store = infra
+        app_id = f"TEMP-{uuid4().hex[:4]}"
+    
+        # 1. First event: Submitted (T-10m)
+        t1 = datetime.utcnow() - timedelta(minutes=10)
+        e1 = StoredEvent(
+            event_id=uuid4(),
+            stream_id=f"loan-{app_id}",
+            stream_position=1,
+            event_type="ApplicationSubmitted",
+            payload={"application_id": app_id, "applicant_id": "T-1"},
+            recorded_at=t1
+        )
+    
+        # 2. Second event: Analysis (T-5m)
+        t2 = datetime.utcnow() - timedelta(minutes=5)
+        e2 = StoredEvent(
+            event_id=uuid4(),
+            stream_id=f"loan-{app_id}",
+            stream_position=2,
+            event_type="CreditAnalysisCompleted",
+            payload={"application_id": app_id, "risk": "LOW"},
+            recorded_at=t2
+        )
+    
+        # Directly bypass store logic for precise recorded_at control in test
+        async with db.transaction() as conn:
+            for e in [e1, e2]:
+                await conn.execute(
+                    """
+                    INSERT INTO events (event_id, stream_id, stream_position, event_type, payload, metadata, recorded_at)
+                    VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, $6)
+                    """,
+                    e.event_id, e.stream_id, e.stream_position, e.event_type, e.payload, e.recorded_at
+                )
+    
+        # 3. Request timeline as_of T-7m (should only see first event)
+        as_of = (t1 + timedelta(minutes=2)).isoformat()
+        timeline = await get_decision_timeline(app_id, as_of=as_of)
+    
+        # Debug info if fails
+        if isinstance(timeline, dict) and "error" in timeline:
+>           pytest.fail(f"Temporal Query failed: {timeline['error']}")
+E           Failed: Temporal Query failed: Failed to reconstruct historical state: can't compare offset-naive and offset-aware datetimes
+
+tests/test_temporal_queries.py:63: Failed
+=============================== warnings summary ===============================
+tests/test_temporal_queries.py::test_as_of_temporal_timeline
+  /Users/aman/Desktop/projects/10academy/event-ledger-system/tests/test_temporal_queries.py:25: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    t1 = datetime.utcnow() - timedelta(minutes=10)
+
+tests/test_temporal_queries.py::test_as_of_temporal_timeline
+  /Users/aman/Desktop/projects/10academy/event-ledger-system/tests/test_temporal_queries.py:36: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    t2 = datetime.utcnow() - timedelta(minutes=5)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_temporal_queries.py::test_as_of_temporal_timeline - Failed:...
+======================== 1 failed, 2 warnings in 3.52s =========================

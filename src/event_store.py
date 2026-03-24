@@ -196,7 +196,16 @@ class EventStore:
                     break
                     
                 batch = []
+                import json
                 for row in rows:
+                    p = row['payload']
+                    if isinstance(p, (str, bytes)):
+                        p = json.loads(p)
+                    
+                    m = row['metadata']
+                    if isinstance(m, (str, bytes)):
+                        m = json.loads(m)
+
                     event = StoredEvent(
                         event_id=row['event_id'],
                         stream_id=row['stream_id'],
@@ -204,8 +213,8 @@ class EventStore:
                         global_position=row['global_position'],
                         event_type=row['event_type'],
                         event_version=row['event_version'],
-                        payload=row['payload'],
-                        metadata=row['metadata'],
+                        payload=p,
+                        metadata=m,
                         recorded_at=row['recorded_at']
                     )
                     batch.append(self._apply_upcasters(event))

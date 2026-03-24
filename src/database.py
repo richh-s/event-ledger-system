@@ -38,7 +38,7 @@ class Database:
             self._pool = await asyncpg.create_pool(
                 self.dsn,
                 min_size=1,
-                max_size=10,
+                max_size=50,
                 init=init,
                 ssl=ssl_ctx,
                 statement_cache_size=0 # DISABLE statement cache for PgBouncer/Supabase
