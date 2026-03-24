@@ -112,10 +112,20 @@ async def run_integrity_check(store: EventStore, entity_type: str, entity_id: st
         events_verified_count=len(all_events),
         integrity_hash=final_hash,
         previous_hash=last_run_hash,
-        chain_valid=True, # In this implementation, we calculate a new one
+        chain_valid=True,
         tamper_detected=False
     )
     
-    await store.append(audit_stream, [audit_event], expected_version=len(previous_runs) if previous_runs else -1, aggregate_type="AuditLedger")
+    # Use current stream version for correct OCC concurrency control
+    current_version = await store.stream_version(audit_stream)
+    
+    await store.append(
+        audit_stream, 
+        [audit_event], 
+        expected_version=current_version, 
+        aggregate_type="AuditLedger",
+        correlation_id=entity_id,
+        causation_id=None
+    )
 
     return IntegrityResult(True, False, len(all_events), final_hash)

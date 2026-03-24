@@ -3,7 +3,7 @@ from typing import AsyncIterator, Callable
 
 import asyncpg
 
-from .models import BaseEvent, StoredEvent, StreamMetadata
+from .models import BaseEvent, StoredEvent, StreamMetadata, DomainError
 from .database import Database
 from .exceptions import OptimisticConcurrencyError, StreamArchivedError
 
@@ -80,7 +80,13 @@ class EventStore:
                 except asyncpg.exceptions.UniqueViolationError:
                     raise OptimisticConcurrencyError(stream_id, expected_version, -1)
             
-            # 2. Insert all events
+            # 2. Validate causation_id if provided
+            if causation_id:
+                causal_exists = await conn.fetchval("SELECT 1 FROM events WHERE event_id = $1", causation_id)
+                if not causal_exists:
+                    raise DomainError(f"Causal Integrity Violation: causation_id '{causation_id}' not found in event store.")
+
+            # 3. Insert all events
             for base_event in events:
                 new_version += 1
                 

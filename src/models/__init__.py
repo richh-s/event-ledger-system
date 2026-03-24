@@ -4,6 +4,7 @@ from .events import (
     StreamMetadata,
     ApplicationSubmitted,
     AgentEvent,
+    DomainError,
     # Add other common events if needed
 )
 
@@ -13,4 +14,5 @@ __all__ = [
     "StreamMetadata",
     "ApplicationSubmitted",
     "AgentEvent",
+    "DomainError",
 ]
