@@ -55,7 +55,7 @@ class AggregateRepository:
         expected_version = aggregate.version
         if expected_version == 0:
             expected_version = -1
-        new_version = await self.event_store.append(
+        inserted = await self.event_store.append(
             stream_id=aggregate.stream_id,
             events=aggregate.uncommitted_events,
             expected_version=expected_version if expected_version > 0 else -1,
@@ -63,15 +63,16 @@ class AggregateRepository:
             correlation_id=correlation_id,
             causation_id=causation_id
         )
+        new_version = inserted[-1].stream_position
         
         # Optionally create a snapshot if threshold is crossed
         if new_version // self.snapshot_threshold > expected_version // self.snapshot_threshold:
-            state_json = json.dumps(aggregate.get_state())
+            state_data = aggregate.get_state()  # dict — asyncpg JSONB codec handles serialization
             async with self.db.transaction() as conn:
                 await conn.execute(
                     "INSERT INTO snapshots (stream_id, aggregate_type, version, state) VALUES ($1, $2, $3, $4) "
                     "ON CONFLICT (stream_id, version) DO NOTHING",
-                    aggregate.stream_id, aggregate_type, new_version, state_json
+                    aggregate.stream_id, aggregate_type, new_version, state_data
                 )
 
         aggregate.uncommitted_events.clear()

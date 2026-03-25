@@ -98,7 +98,7 @@ async def ingest_data():
                         INSERT INTO events (stream_id, stream_position, event_type, event_version, payload, recorded_at)
                         VALUES ($1, $2, $3, $4, $5, $6)
                         """,
-                        stream_id, new_v, event_type, data.get("event_version", 1), json.dumps(payload), recorded_at
+                        stream_id, new_v, event_type, data.get("event_version", 1), payload, recorded_at  # payload is dict — asyncpg JSONB codec handles serialization
                     )
                     
                     # 4. Update stream version

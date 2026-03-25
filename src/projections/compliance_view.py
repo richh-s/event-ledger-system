@@ -126,7 +126,7 @@ class ComplianceAuditViewProjection(BaseProjection):
             WHERE EXCLUDED.global_position > compliance_audit_view.global_position
             """,
             app_id, rule_id, rule_version, result,
-            is_hard_block, recorded_at, json.dumps(metadata), global_position
+            is_hard_block, recorded_at, metadata, global_position  # dict — asyncpg JSONB codec handles serialization
         )
 
     async def _save_snapshot(self, conn, app_id: str, at_position: int) -> None:
@@ -142,7 +142,7 @@ class ComplianceAuditViewProjection(BaseProjection):
             VALUES ($1, $2, $3)
             ON CONFLICT (application_id, global_position) DO NOTHING
             """,
-            app_id, at_position, json.dumps(snapshot_data, default=str)
+            app_id, at_position, snapshot_data  # list[dict] — asyncpg JSONB codec handles serialization
         )
 
     def _build_meta(self, event: StoredEvent) -> dict:

@@ -82,34 +82,36 @@ class ProjectionDaemon:
             if not got_lock:
                 return False
             
-            # Check lease in DB
             now = datetime.now(timezone.utc)
             lease_duration = timedelta(seconds=30)
             
-            row = await conn.fetchrow(
-                "SELECT owner_node_id, lease_expires_at FROM projection_checkpoints WHERE projection_name = $1 FOR UPDATE",
-                projection_name
+            # Use UPSERT for atomic lease acquisition/renewal
+            # We take the lease if it's expired OR if we already own it
+            await conn.execute(
+                """
+                INSERT INTO projection_checkpoints 
+                    (projection_name, last_position, owner_node_id, lease_expires_at, updated_at)
+                VALUES 
+                    ($1, 0, $2, NOW() + interval '30 seconds', NOW())
+                ON CONFLICT (projection_name) 
+                DO UPDATE SET 
+                    owner_node_id = EXCLUDED.owner_node_id,
+                    lease_expires_at = EXCLUDED.lease_expires_at,
+                    updated_at = EXCLUDED.updated_at
+                WHERE 
+                    projection_checkpoints.owner_node_id IS NULL OR 
+                    projection_checkpoints.owner_node_id = $2 OR 
+                    projection_checkpoints.lease_expires_at < NOW()
+                """,
+                projection_name, node_id
             )
             
-            if row:
-                owner = row['owner_node_id']
-                expires = row['lease_expires_at']
-                
-                if owner and owner != node_id and expires and expires > now:
-                    # Owned by someone else and active
-                    return False
-                
-                # Take or renew lease
-                await conn.execute(
-                    "UPDATE projection_checkpoints SET owner_node_id = $1, lease_expires_at = $2, updated_at = $3 WHERE projection_name = $4",
-                    node_id, now + lease_duration, now, projection_name
-                )
-            else:
-                # Create initial checkpoint with lease
-                await conn.execute(
-                    "INSERT INTO projection_checkpoints (projection_name, last_position, owner_node_id, lease_expires_at, updated_at) VALUES ($1, 0, $2, $3, $4)",
-                    projection_name, node_id, now + lease_duration, now
-                )
+            # Verify we actually got the lease (the WHERE clause might have filtered the update)
+            is_owner = await conn.fetchval(
+                "SELECT 1 FROM projection_checkpoints WHERE projection_name = $1 AND owner_node_id = $2 AND lease_expires_at > NOW()",
+                projection_name, node_id
+            )
+            return bool(is_owner)
             
             return True
 
@@ -168,11 +170,12 @@ class ProjectionDaemon:
                     except Exception as dlq_e:
                         logger.critical(f"[{proj.projection_name}] FAILED TO LOG DLQ: {str(dlq_e)}")
             
-            # Atomic checkpoint commit + lease renewal
-            now = datetime.now(timezone.utc)
+            # Atomic checkpoint commit + lease renewal using DB time
             await conn.execute(
-                "UPDATE projection_checkpoints SET last_position = $1, lease_expires_at = $2, updated_at = $3 WHERE projection_name = $4 AND owner_node_id = $5",
-                current_checkpoint, now + timedelta(seconds=30), now, proj.projection_name, node_id
+                "UPDATE projection_checkpoints "
+                "SET last_position = $1, lease_expires_at = NOW() + interval '30 seconds', updated_at = NOW() "
+                "WHERE projection_name = $2 AND owner_node_id = $3",
+                current_checkpoint, proj.projection_name, node_id
             )
 
     async def get_lag(self, projection_name: str) -> int:

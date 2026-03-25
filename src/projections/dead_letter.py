@@ -17,7 +17,6 @@ class DeadLetterQueue:
         retry_count: int = 0
     ) -> int:
         """Logs a failure to the dead_letter_queue table using an existing connection."""
-        import json
         dead_letter_id = await conn.fetchval(
             """
             INSERT INTO dead_letter_queue 
@@ -29,7 +28,7 @@ class DeadLetterQueue:
             event.event_id,
             event.global_position,
             event.event_type,
-            json.dumps(event.payload),
+            event.payload,  # dict — asyncpg JSONB codec handles serialization
             error_message,
             retry_count
         )

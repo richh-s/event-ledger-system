@@ -19,10 +19,20 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Annotated, Optional, Union
 from uuid import UUID, uuid4
 import json
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+
+
+# ─── TYPE DEFINITIONS ─────────────────────────────────────────────────────────
+
+# Canonical Money Type: Ensures Decimal(10.0) -> float(10.0) for JSONB 'number' storage.
+# This eliminates "requested_amount_usd": "250000.0" (string) in the DB.
+NumericAmount = Annotated[
+    Decimal,
+    PlainSerializer(lambda x: float(x) if x is not None else None, return_type=float)
+]
 
 
 # ─── ENUMS ───────────────────────────────────────────────────────────────────
@@ -152,7 +162,7 @@ class FraudAnomaly(BaseModel):
 class CreditDecision(BaseModel):
     model_config = ConfigDict(frozen=True)
     risk_tier: RiskTier
-    recommended_limit_usd: Decimal
+    recommended_limit_usd: NumericAmount
     confidence: float
     rationale: str
     key_concerns: list[str] = Field(default_factory=list)
@@ -213,6 +223,16 @@ class StoredEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     recorded_at: datetime
 
+    @field_validator('payload', mode='before')
+    @classmethod
+    def decode_payload(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return v
+        return v
+
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
 
@@ -242,7 +262,9 @@ class BaseEvent(BaseModel):
     recorded_at: datetime | None = None
 
     def to_payload(self) -> dict:
+        """Returns the domain payload for storage in JSONB. Uses Pydantic JSON mode."""
         d = self.model_dump(mode='json')
+        # Remove system-level metadata from the business payload
         for k in ('event_type', 'event_version', 'event_id', 'metadata', 'recorded_at'):
             d.pop(k, None)
         return d
@@ -263,7 +285,7 @@ class ApplicationSubmitted(BaseEvent):
     event_type: str = "ApplicationSubmitted"
     application_id: str
     applicant_id: str
-    requested_amount_usd: Decimal
+    requested_amount_usd: NumericAmount
     loan_purpose: LoanPurpose
     loan_term_months: int
     submission_channel: str
@@ -337,7 +359,7 @@ class DecisionGenerated(BaseEvent):
     orchestrator_session_id: str
     recommendation: str
     confidence: float
-    approved_amount_usd: Decimal | None = None
+    approved_amount_usd: Optional[NumericAmount] = None
     conditions: list[str] = Field(default_factory=list)
     executive_summary: str
     key_risks: list[str] = Field(default_factory=list)
@@ -366,7 +388,7 @@ class HumanReviewCompleted(BaseEvent):
 class ApplicationApproved(BaseEvent):
     event_type: str = "ApplicationApproved"
     application_id: str
-    approved_amount_usd: Decimal
+    approved_amount_usd: NumericAmount
     interest_rate_pct: float
     term_months: int
     conditions: list[str] = Field(default_factory=list)

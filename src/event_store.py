@@ -46,6 +46,19 @@ class EventStore:
         if not events:
             return []
 
+        # ── PAYLOAD GUARD: reject string payloads (double-serialization) ──
+        for ev in events:
+            payload = ev.to_payload()
+            if isinstance(payload, str):
+                raise ValueError(
+                    f"Payload must be dict, not string (double serialization detected) "
+                    f"for event_type={ev.event_type}"
+                )
+            assert isinstance(payload, dict), (
+                f"Payload must be dict, got {type(payload).__name__} "
+                f"for event_type={ev.event_type}"
+            )
+
         inserted_events: list[StoredEvent] = []
         async with self.db.transaction() as conn:
             # 1. Check stream version

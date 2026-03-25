@@ -16,10 +16,9 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
-
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
 # ============================================================================
 # Errors
@@ -63,6 +62,17 @@ class StoredEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     recorded_at: datetime
+    
+    @field_validator('payload', 'metadata', mode='before')
+    @classmethod
+    def decode_json(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            try:
+                import json
+                return json.loads(v)
+            except Exception:
+                return v
+        return v
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
@@ -164,36 +174,42 @@ class ComplianceVerdict(str, Enum):
 
 # ─── VALUE OBJECTS ────────────────────────────────────────────────────────────
 
+# Define a numeric serializer for Decimal to ensure it's stored as a number in JSONB
+NumericAmount = Annotated[
+    Decimal,
+    PlainSerializer(lambda x: float(x) if x is not None else None, return_type=float)
+]
+
 class FinancialFacts(BaseModel):
     """Structured facts extracted from a financial statement PDF by the Week 3 pipeline."""
     model_config = ConfigDict(frozen=True)
 
     # Income Statement (GAAP)
-    total_revenue: Decimal | None = None
-    gross_profit: Decimal | None = None
-    operating_expenses: Decimal | None = None
-    operating_income: Decimal | None = None
-    ebitda: Decimal | None = None
-    depreciation_amortization: Decimal | None = None
-    interest_expense: Decimal | None = None
-    income_before_tax: Decimal | None = None
-    tax_expense: Decimal | None = None
-    net_income: Decimal | None = None
+    total_revenue: NumericAmount | None = None
+    gross_profit: NumericAmount | None = None
+    operating_expenses: NumericAmount | None = None
+    operating_income: NumericAmount | None = None
+    ebitda: NumericAmount | None = None
+    depreciation_amortization: NumericAmount | None = None
+    interest_expense: NumericAmount | None = None
+    income_before_tax: NumericAmount | None = None
+    tax_expense: NumericAmount | None = None
+    net_income: NumericAmount | None = None
     # Balance Sheet (GAAP)
-    total_assets: Decimal | None = None
-    current_assets: Decimal | None = None
-    cash_and_equivalents: Decimal | None = None
-    accounts_receivable: Decimal | None = None
-    inventory: Decimal | None = None
-    total_liabilities: Decimal | None = None
-    current_liabilities: Decimal | None = None
-    long_term_debt: Decimal | None = None
-    total_equity: Decimal | None = None
+    total_assets: NumericAmount | None = None
+    current_assets: NumericAmount | None = None
+    cash_and_equivalents: NumericAmount | None = None
+    accounts_receivable: NumericAmount | None = None
+    inventory: NumericAmount | None = None
+    total_liabilities: NumericAmount | None = None
+    current_liabilities: NumericAmount | None = None
+    long_term_debt: NumericAmount | None = None
+    total_equity: NumericAmount | None = None
     # Cash Flow
-    operating_cash_flow: Decimal | None = None
-    investing_cash_flow: Decimal | None = None
-    financing_cash_flow: Decimal | None = None
-    free_cash_flow: Decimal | None = None
+    operating_cash_flow: NumericAmount | None = None
+    investing_cash_flow: NumericAmount | None = None
+    financing_cash_flow: NumericAmount | None = None
+    free_cash_flow: NumericAmount | None = None
     # Computed ratios (pipeline computes after extraction)
     debt_to_equity: float | None = None
     current_ratio: float | None = None
@@ -211,7 +227,7 @@ class FinancialFacts(BaseModel):
     page_references: dict[str, str] = Field(default_factory=dict)
     extraction_notes: list[str] = Field(default_factory=list)
     balance_sheet_balances: bool | None = None
-    balance_discrepancy_usd: Decimal | None = None
+    balance_discrepancy_usd: NumericAmount | None = None
 
 class FraudAnomaly(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -226,7 +242,7 @@ class CreditDecision(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     risk_tier: RiskTier
-    recommended_limit_usd: Decimal
+    recommended_limit_usd: NumericAmount
     confidence: float = Field(ge=0.0, le=1.0)  # pyre-ignore[6]
     rationale: str
     key_concerns: list[str] = Field(default_factory=list)
@@ -272,7 +288,7 @@ class ApplicationSubmitted(BaseEvent):
     event_type: str = "ApplicationSubmitted"
     application_id: str
     applicant_id: str
-    requested_amount_usd: Decimal
+    requested_amount_usd: NumericAmount
     loan_purpose: LoanPurpose
     loan_term_months: int
     submission_channel: str
@@ -354,7 +370,7 @@ class DecisionGenerated(BaseEvent):
     orchestrator_session_id: str
     recommendation: str
     confidence: float = Field(ge=0.0, le=1.0)  # pyre-ignore[6]
-    approved_amount_usd: Decimal | None = None
+    approved_amount_usd: NumericAmount | None = None
     conditions: list[str] = Field(default_factory=list)
     executive_summary: str
     key_risks: list[str] = Field(default_factory=list)
@@ -386,7 +402,7 @@ class ApplicationApproved(BaseEvent):
     model_config = ConfigDict(frozen=True)
     event_type: str = "ApplicationApproved"
     application_id: str
-    approved_amount_usd: Decimal
+    approved_amount_usd: NumericAmount
     interest_rate_pct: float = Field(ge=0.0)  # pyre-ignore[6]
     term_months: int
     conditions: list[str] = Field(default_factory=list)
@@ -579,7 +595,7 @@ class AgentContextLoaded(BaseEvent):
     session_id: str
     agent_type: AgentType
     context_source: str # e.g. "loan-APP123"
-    context_version: int 
+    context_version: int
     context_hash: str
     loaded_at: datetime
 
