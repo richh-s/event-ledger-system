@@ -26,6 +26,7 @@ from src.projections.daemon import ProjectionDaemon
 from src.projections.application_summary import ApplicationSummaryProjection
 from src.projections.agent_decision_trace import AgentDecisionTraceProjection
 from src.projections.audit_registry import AuditRegistryProjection
+from src.queries.historical_reconstruction import HistoricalReconstructor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -150,37 +151,51 @@ async def get_projection_lag() -> Dict[str, int]:
         lags[name] = await daemon.get_lag(name)
     return lags
 
-@mcp.resource("decision-history://{id}")
-async def decision_history_resource(id: str) -> str:
-    """Markdown summary of an application's decision trail."""
-    history = await get_decision_history(id)
-    if "error" in history:
-        return f"# Error\n{history['error']}"
-        
-    md = f"# Decision History: {id}\n\n"
-    md += f"**Correlation ID:** {history['correlation_id']}\n\n"
-    md += "| Seq | Stream | Event Type | Recorded At |\n"
-    md += "|-----|--------|------------|-------------|\n"
-    for i, e in enumerate(history["history"]):
-        md += f"| {i+1} | {e['stream']} | {e['type']} | {e['recorded_at']} |\n"
-    
-    return md
+@mcp.resource("ledger://applications/{id}/history")
+async def application_history_resource(id: str) -> str:
+    """Gets the temporal reconstruction history for an application."""
+    reconstructor = HistoricalReconstructor(db, store)
+    try:
+        data = await reconstructor.build_regulatory_package(id)
+        return json.dumps({
+            "timeline": data["timeline"],
+            "reconstructed_read_model": data["reconstructed_read_model"],
+            "event_count": data["metadata"]["total_events"],
+            "included_streams": data["metadata"]["included_streams"]
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
-@mcp.resource("integrity-report://{id}")
-async def integrity_report_resource(id: str) -> str:
-    """Detailed integrity validation report for a stream."""
-    res = await run_integrity_check(id)
-    md = f"# Integrity Report: {id}\n\n"
-    md += f"**Status:** {'VALID' if res['valid'] else 'INVALID'}\n"
-    md += f"**Events Verified:** {res['count']}\n"
-    md += f"**Final Hash:** `{res['hash']}`\n"
-    
-    if not res['valid']:
-        md += f"\n## FAILED SESSIONS\n"
-        for s in res.get('failed_sessions', []):
-            md += f"- Session {s} failed CAUSAL VALIDATION\n"
-            
-    return md
+@mcp.resource("ledger://applications/{id}/regulatory-package")
+async def regulatory_package_resource(id: str) -> str:
+    """Returns the comprehensive phase 6 regulatory examination package."""
+    reconstructor = HistoricalReconstructor(db, store)
+    try:
+        package = await reconstructor.build_regulatory_package(id)
+        # Exclude the massive full_event_history for the string resource view to keep it crisp,
+        # but the JSON structure is preserved
+        package.pop("full_event_history", None)
+        return json.dumps(package, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@mcp.tool()
+async def recompute_credit_decision(
+    application_id: str,
+    alternate_model: str,
+    as_of_global_position: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Phase 6 aligned temporal query "what-if" tool.
+    Recomputes the credit decision locally using an alternate model 
+    valuing historical facts without polluting the event stream.
+    """
+    reconstructor = HistoricalReconstructor(db, store)
+    return await reconstructor.what_if_credit_recomputation(
+        application_id, 
+        alternate_model, 
+        as_of_global_position
+    )
 
 async def start():
     global db, store, daemon
