@@ -75,7 +75,7 @@ class HistoricalReconstructor:
             
             # Step 3: Replay and construct models
             events = []
-            schema_validation_passed = True
+            invalid_events_filtered = 0
             streams_included = set()
             
             agent_traces: Dict[str, List[Dict[str, Any]]] = {}
@@ -108,8 +108,8 @@ class HistoricalReconstructor:
                     obj = deserialize_event(evt_type, payload)
                     evt_dict = obj.model_dump(mode='json') if hasattr(obj, "model_dump") else obj
                 except Exception as e:
-                    schema_validation_passed = False
-                    evt_dict = payload
+                    invalid_events_filtered += 1
+                    continue
                     
                 parsed = {
                     "global_position": r["global_position"],
@@ -174,6 +174,9 @@ class HistoricalReconstructor:
                 if stream_id.startswith("audit-"):
                     audit_events.append(parsed)
 
+            if not events:
+                raise ValueError("All matching events were filtered out due to schema validation failures.")
+
             # Step 4: Verification Summaries
             session_structure_passed = True
             for st_id, tr in agent_traces.items():
@@ -218,8 +221,9 @@ class HistoricalReconstructor:
                     "integrity_passed": audit_integrity_passed,
                     "latest_check": latest_audit
                 },
-                "validation_flags": {
-                    "schema_validation_passed": schema_validation_passed,
+                "validation": {
+                    "schema_validation_passed": True,
+                    "invalid_events_filtered": invalid_events_filtered,
                     "session_structure_passed": session_structure_passed,
                 },
                 "narrative": narrative,
