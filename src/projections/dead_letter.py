@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime
-from src.schema.events import StoredEvent
+from src.models.events import StoredEvent
 
 class DeadLetterQueue:
     """Handles logging of failed event processing within a projection."""
@@ -22,7 +22,7 @@ class DeadLetterQueue:
             INSERT INTO dead_letter_queue 
             (projection_name, event_id, global_position, event_type, payload, error_message, retry_count)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id
+            RETURNING dead_letter_id
             """,
             projection_name,
             event.event_id,

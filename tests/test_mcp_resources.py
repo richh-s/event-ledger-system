@@ -4,18 +4,9 @@ import json
 from src.database import Database
 from src.mcp.resources import (
     get_application_summary, 
-    get_decision_timeline, 
     get_agent_session_trace,
     get_health_metrics
 )
-
-@pytest.fixture
-async def db():
-    import os
-    db = Database(os.getenv("DATABASE_URL"))
-    await db.connect()
-    yield db
-    await db.disconnect()
 
 @pytest.mark.asyncio
 async def test_mcp_application_summary_resource(db):

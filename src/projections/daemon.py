@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from src.database import Database
 from src.event_store import EventStore
-from src.schema.events import StoredEvent
+from src.models.events import StoredEvent
 from src.projections.base import BaseProjection
 from src.projections.dead_letter import DeadLetterQueue
 

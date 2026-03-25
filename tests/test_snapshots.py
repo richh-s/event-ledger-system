@@ -6,10 +6,17 @@ from src.event_store import EventStore
 from src.aggregates.repository import AggregateRepository
 from src.aggregates.document_package import DocumentPackageAggregate
 from src.models.events import (
-    PackageCreated,
+    ApplicationSubmitted,
+    DocumentPackageCreated,
     DocumentAdded,
+    DocumentFormatValidated,
+    ExtractionCompleted,
+    QualityAssessmentCompleted,
+    PackageReadyForAnalysis,
+    LoanPurpose,
     DocumentType,
-    DocumentFormat
+    DocumentFormat,
+    FinancialFacts
 )
 
 @pytest.mark.asyncio
@@ -21,7 +28,7 @@ async def test_snapshots_creation_and_reconstruction(db: Database):
     stream_id = "docpkg-snapshot-test"
     agg = DocumentPackageAggregate(stream_id)
     
-    agg.create_package(PackageCreated(
+    agg.create_package(DocumentPackageCreated(
         package_id="pkg1", application_id="test", required_documents=[], created_at=datetime.now()
     ))
     agg.add_document(DocumentAdded(

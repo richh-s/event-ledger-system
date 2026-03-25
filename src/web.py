@@ -12,21 +12,20 @@ load_dotenv()
 
 from src.database import get_db, disconnect_db
 from src.event_store import EventStore
-from src.queries.historical_reconstruction import HistoricalReconstructor
+from src.regulatory.package import generate_regulatory_package
+from src.what_if.projector import run_what_if
 from src.projections.application_summary import ApplicationSummaryProjection
 
 app = FastAPI(title="Apex Ledger Hub", version="6.0")
 store = None
 db = None
-reconstructor = None
 
 @app.on_event("startup")
 async def startup():
-    global db, store, reconstructor
+    global db, store
     db = get_db()
     await db.connect()
     store = EventStore(db)
-    reconstructor = HistoricalReconstructor(db, store)
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -55,8 +54,7 @@ async def list_applications():
 async def get_regulatory_package(app_id: str):
     """Deliver Phase 6 Regulatory Extracted Package."""
     try:
-        package = await reconstructor.build_regulatory_package(app_id)
-        # Exclude massive raw event log to favor crisp UI response
+        package = await generate_regulatory_package(app_id, db, store)
         package.pop("full_event_history", None)
         return package
     except ValueError as e:
@@ -71,7 +69,7 @@ class WhatIfRequest(BaseModel):
 async def recompute_credit_decision(app_id: str, request: WhatIfRequest):
     """Phase 6 'what-if' counterfactual API."""
     try:
-        res = await reconstructor.what_if_credit_recomputation(app_id, alternate_model=request.alternate_model)
+        res = await run_what_if(app_id, request.alternate_model, db, store)
         if "error" in res:
             raise HTTPException(status_code=400, detail=res["error"])
         return res

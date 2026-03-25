@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import logging
 from src.projections.base import BaseProjection
-from src.schema.events import StoredEvent
+from src.models.events import StoredEvent
 
 logger = logging.getLogger(__name__)
 

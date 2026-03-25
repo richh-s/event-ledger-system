@@ -5,16 +5,14 @@ from src.database import Database
 from src.event_store import EventStore
 from src.projections.daemon import ProjectionDaemon
 from src.projections.application_summary import ApplicationSummaryProjection
-from src.projections.decision_timeline import DecisionTimelineProjection
-from src.projections.agent_session_trace import AgentSessionTraceProjection
+from src.projections.compliance_audit import ComplianceAuditViewProjection
+from src.projections.agent_performance import AgentPerformanceLedgerProjection
 from src.models.events import ApplicationSubmitted, AgentSessionStarted, AgentNodeExecuted, LoanPurpose, AgentType
 from datetime import datetime
 import uuid
 
 @pytest.mark.asyncio
-async def test_phase3_audit_compliance():
-    db = Database(os.getenv("DATABASE_URL"))
-    await db.connect()
+async def test_phase3_audit_compliance(db):
     store = EventStore(db)
     
     # 1. CLEAN START (FK Order corrected)
@@ -61,15 +59,15 @@ async def test_phase3_audit_compliance():
     # 3. RUN DAEMON (Parallel Tasks)
     projections = [
         ApplicationSummaryProjection(),
-        DecisionTimelineProjection(),
-        AgentSessionTraceProjection()
+        ComplianceAuditViewProjection(),
+        AgentPerformanceLedgerProjection()
     ]
     daemon = ProjectionDaemon(db, store, projections, poll_interval_ms=10)
     await daemon.start()
     
     # Wait for processing
     print("Waiting for independent tasks to catch up...")
-    await asyncio.sleep(3.0) # Increased for remote DB
+    await asyncio.sleep(1.0) # Given we are local, 1s is more than enough
     
     # 4. VERIFY ApplicationSummary
     async with db.get_connection() as conn:
@@ -77,19 +75,11 @@ async def test_phase3_audit_compliance():
         assert summary is not None, "ApplicationSummary failed to project!"
         assert summary['state'] == "SUBMITTED"
 
-        # 5. VERIFY DecisionTimeline (Sequential ordering)
-        # Note: session events also have app_id, so they should be in timeline
-        timeline = await conn.fetch("SELECT * FROM decision_timeline WHERE application_id = $1 ORDER BY sequence ASC", app_id)
-        assert len(timeline) >= 2, f"Timeline only caught {len(timeline)} events!"
-        assert timeline[0]['event_type'] == "ApplicationSubmitted"
-
-        # 6. VERIFY AgentSessionTrace (Header + Trace linkage)
-        header = await conn.fetchrow("SELECT * FROM agent_session_header WHERE session_id = $1", sess_id)
-        assert header is not None, "AgentSessionHeader failed!"
-        
-        trace = await conn.fetch("SELECT * FROM agent_session_trace WHERE session_id = $1", sess_id)
-        assert len(trace) == 1, "AgentSessionTrace failed!"
+        # 5. VERIFY AgentPerformanceLedger
+        perf = await conn.fetchrow("SELECT * FROM agent_performance_ledger WHERE agent_id = $1", "credit_analysis")
+        assert perf is not None, "AgentPerformanceLedger failed!"
+        assert float(perf["analyses_completed"]) == 1
+        assert float(perf["avg_duration_ms"]) == 500
 
     await daemon.stop()
-    await db.disconnect()
     print("✅ Logic Verification: ALL Projections healthy and current.")

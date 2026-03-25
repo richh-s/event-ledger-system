@@ -28,7 +28,10 @@ class AggregateRepository:
             )
             if row:
                 snapshot_version = row["version"]
-                aggregate.restore_state(json.loads(row["state"]))
+                state = row["state"]
+                if isinstance(state, (str, bytes)):
+                    state = json.loads(state)
+                aggregate.restore_state(state)
                 aggregate.version = snapshot_version
 
         # 2. Load events after snapshot
@@ -67,12 +70,12 @@ class AggregateRepository:
         
         # Optionally create a snapshot if threshold is crossed
         if new_version // self.snapshot_threshold > expected_version // self.snapshot_threshold:
-            state_data = aggregate.get_state()  # dict — asyncpg JSONB codec handles serialization
+            state_data = aggregate.get_state()  # dict
             async with self.db.transaction() as conn:
                 await conn.execute(
                     "INSERT INTO snapshots (stream_id, aggregate_type, version, state) VALUES ($1, $2, $3, $4) "
                     "ON CONFLICT (stream_id, version) DO NOTHING",
-                    aggregate.stream_id, aggregate_type, new_version, state_data
+                    aggregate.stream_id, aggregate_type, new_version, json.dumps(state_data)
                 )
 
         aggregate.uncommitted_events.clear()

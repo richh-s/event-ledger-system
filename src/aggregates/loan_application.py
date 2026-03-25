@@ -63,7 +63,7 @@ class LoanApplicationAggregate(BaseAggregate):
             if to_state == ApplicationState.FRAUD_COMPLETE:
                 valid = True
         elif self.state == ApplicationState.FRAUD_COMPLETE:
-            if to_state in (ApplicationState.COMPLIANCE_CHECK_REQUESTED, ApplicationState.PENDING_DECISION, ApplicationState.APPROVED, ApplicationState.DECLINED, ApplicationState.REFERRED):
+            if to_state in (ApplicationState.COMPLIANCE_CHECK_REQUESTED, ApplicationState.COMPLIANCE_CHECK_COMPLETE, ApplicationState.PENDING_DECISION, ApplicationState.APPROVED, ApplicationState.DECLINED, ApplicationState.REFERRED):
                 valid = True
         elif self.state == ApplicationState.COMPLIANCE_CHECK_REQUESTED:
             if to_state in (ApplicationState.COMPLIANCE_CHECK_COMPLETE, ApplicationState.COMPLIANCE_BLOCKED):
@@ -78,8 +78,13 @@ class LoanApplicationAggregate(BaseAggregate):
             if to_state in (ApplicationState.APPROVED, ApplicationState.DECLINED):
                 valid = True
         
+        # Permissive for demo/recovery: allow transitions from SUBMITTED to almost any analysis state
+        if self.state == ApplicationState.SUBMITTED:
+            if to_state in (ApplicationState.DOCUMENTS_PROCESSED, ApplicationState.CREDIT_COMPLETE, ApplicationState.FRAUD_COMPLETE):
+                valid = True
+        
         # Valid from any state
-        if to_state == ApplicationState.COMPLIANCE_BLOCKED: 
+        if to_state in (ApplicationState.COMPLIANCE_BLOCKED, ApplicationState.DECLINED_COMPLIANCE):
             valid = True
 
         if not valid:

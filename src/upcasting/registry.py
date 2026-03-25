@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from typing import Callable, Dict, Tuple, List
-from src.schema.events import StoredEvent
+from src.models.events import StoredEvent
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,8 @@ class UpcasterRegistry:
         while (current_type, current_version) in self._upcasters:
             upcaster = self._upcasters[(current_type, current_version)]
             try:
+                # Add recorded_at to metadata for upcaster context
+                current_metadata["recorded_at"] = event.recorded_at
                 current_payload, current_metadata = upcaster(current_payload, current_metadata)
                 # Increment version explicitly in metadata
                 current_version += 1

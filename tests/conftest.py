@@ -7,8 +7,8 @@ from typing import AsyncGenerator
 from src.database import Database
 
 # Use environment variable for CI flexibility, fallback to standard localhost
-TEST_DB_DSN = os.getenv("TEST_DB_DSN", "postgres://postgres:postgres@localhost:5434/ledger_test")
-DEFAULT_DB_DSN = os.getenv("DEFAULT_DB_DSN", "postgres://postgres:postgres@localhost:5434/postgres")
+# We don't try to drop/create db if using a remote Supabase DB, we just truncate and use it
+TEST_DB_DSN = os.getenv("DATABASE_URL") or os.getenv("TEST_DB_DSN", "postgres://postgres:postgres@localhost:5434/ledger_test")
 
 
 @pytest.fixture(scope="session")
@@ -21,42 +21,35 @@ def event_loop():
 
 @pytest.fixture(scope="session")
 async def setup_test_db() -> AsyncGenerator[Database, None]:
-    """Creates the ledger_test database, initializes the schema, and yields a Database instance."""
-    # Attempt to create test database
-    try:
-        conn = await asyncpg.connect(DEFAULT_DB_DSN)
-        try:
-            await conn.execute("CREATE DATABASE ledger_test")
-        except asyncpg.exceptions.DuplicateDatabaseError:
-            pass
-        finally:
-            await conn.close()
-    except Exception as e:
-        pytest.skip(f"Could not connect to local PostgreSQL to create test db: {e}")
-
+    """Uses the specified database, initializes the schema, and yields a Database instance."""
     db = Database(TEST_DB_DSN)
-    await db.connect()
+    try:
+        await db.connect()
+    except Exception as e:
+        pytest.skip(f"Could not connect to test db at {TEST_DB_DSN}: {e}")
     
     import pathlib
     schema_path = pathlib.Path(__file__).parent.parent / "src" / "schema.sql"
+    proj_schema_path = pathlib.Path(__file__).parent.parent / "src" / "projections" / "schema.sql"
     await db.init_schema(str(schema_path))
+    await db.init_schema(str(proj_schema_path))
     
     yield db
     
     await db.disconnect()
-    
-    # Teardown database
-    try:
-        conn = await asyncpg.connect(DEFAULT_DB_DSN)
-        await conn.execute("DROP DATABASE ledger_test WITH (FORCE)")
-        await conn.close()
-    except Exception:
-        pass
 
 
 @pytest.fixture
 async def db(setup_test_db: Database) -> Database:
     """Truncates all tables before each test to guarantee isolation."""
-    async with setup_test_db.get_connection() as conn:
-        await conn.execute("TRUNCATE events, event_streams, outbox, projection_checkpoints, snapshots RESTART IDENTITY CASCADE")
+    async with setup_test_db.transaction() as conn:
+        tables = ["outbox", "events", "snapshots", "event_streams", "projection_checkpoints", "dead_letter_queue", "agent_performance_ledger", "application_summary", "compliance_audit_view", "compliance_snapshots", "agent_decision_trace", "audit_registry_view"]
+        await conn.execute(f"TRUNCATE {', '.join(tables)} CASCADE")
+        
+    import src.database
+    src.database._db_instance = setup_test_db
+    
+    return setup_test_db
+    src.database._db_instance = setup_test_db
+    
     return setup_test_db

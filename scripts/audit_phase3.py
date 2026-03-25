@@ -13,7 +13,7 @@ from src.database import Database
 from src.event_store import EventStore
 from src.projections.daemon import ProjectionDaemon
 from src.projections.application_summary import ApplicationSummaryProjection
-from src.projections.compliance_view import ComplianceAuditViewProjection
+from src.projections.compliance_audit import ComplianceAuditViewProjection
 from src.projections.agent_performance import AgentPerformanceLedgerProjection
 from src.models.events import (
     ApplicationSubmitted, AgentSessionStarted, AgentNodeExecuted,

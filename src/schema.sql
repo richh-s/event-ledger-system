@@ -19,6 +19,8 @@ CREATE INDEX IF NOT EXISTS idx_events_stream_id  ON events (stream_id, stream_po
 CREATE INDEX IF NOT EXISTS idx_events_global_pos ON events (global_position);
 CREATE INDEX IF NOT EXISTS idx_events_type       ON events (event_type);
 CREATE INDEX IF NOT EXISTS idx_events_recorded   ON events (recorded_at);
+CREATE INDEX IF NOT EXISTS idx_events_correlation ON events ((metadata ->> 'correlation_id'));
+CREATE INDEX IF NOT EXISTS idx_events_causation   ON events ((metadata ->> 'causation_id'));
 
 CREATE TABLE IF NOT EXISTS event_streams (
   stream_id        TEXT PRIMARY KEY,

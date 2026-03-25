@@ -30,15 +30,21 @@ class BaseAggregate(ABC):
         instance.load_from_history(events)
         return instance
 
-    def load_from_history(self, events: list[StoredEvent]) -> None:
+    def load_from_history(self, events: list[Any]) -> None:
         """
         Loads the aggregate from a list of historical events.
+        Handles both StoredEvent (from EventStore) and direct BaseEvent subclasses.
         """
         for event in events:
-            self.version = event.stream_position
-            domain_event = self._reconstruct_event(event)
-            if domain_event:
-                self._apply_event(domain_event)
+            if hasattr(event, "stream_position"):
+                self.version = event.stream_position
+            
+            if isinstance(event, StoredEvent):
+                domain_event = self._reconstruct_event(event)
+                if domain_event:
+                    self._apply_event(domain_event)
+            elif isinstance(event, BaseEvent):
+                self._apply_event(event)
 
     def _reconstruct_event(self, stored_event: StoredEvent) -> BaseEvent | None:
         cls = EVENT_REGISTRY.get(stored_event.event_type)

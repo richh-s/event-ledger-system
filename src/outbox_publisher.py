@@ -54,3 +54,4 @@ class OutboxPublisher:
                     await asyncio.sleep(poll_interval)
         except asyncio.CancelledError:
             print("[*] Outbox Publisher Daemon Stopped cleanly.")
+            print("[*] Outbox Publisher Daemon Stopped cleanly.")
