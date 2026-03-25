@@ -68,6 +68,32 @@ To run the full 8-step agent chain with advanced proofs (OCC, WBE, Idempotency, 
 uv run python manual_test_phase2_ai.py
 ```
 
+## 📊 Phase 3 CQRS Projections & Read-Side (Spec-Aligned)
+
+The read-side of The Ledger implements a strict CQRS split, using an asynchronous projection daemon to maintain optimized views for high-performance consumption.
+
+### Exactly 3 Projections
+- **ApplicationSummary**: Real-time state of all loan applications (PII, status, metrics).
+- **ComplianceAuditView**: Detailed rule-level regulatory trail with **Snapshot-based temporal queries** (`?as_of`).
+- **AgentPerformanceLedger**: Incremental aggregation of agent/model accuracy and throughput.
+
+### Async Projection Daemon
+- **Independent Checkpoints**: Each projection tracks its own `global_position` without global locks.
+- **Fault-Tolerant**: Isolated failures are moved to a **Dead Letter Queue (DLQ)** while the daemon continues.
+- **Graceful Shutdown**: Flag-based lifecycle prevents transaction rollbacks during shutdown.
+
+## 🔌 MCP Integration
+
+The system exposes exactly **8 tools** (commands) and **6 resources** (queries) via the Model Context Protocol.
+
+### 6 Read-Side Resources (Spec-Compliant)
+- `ledger://applications/{id}`: Current application state.
+- `ledger://applications/{id}/compliance`: Per-rule regulatory verdicts (supports `?as_of`).
+- `ledger://applications/{id}/audit-trail`: Raw event history (direct read).
+- `ledger://agents/{id}/performance`: Aggregated agent/model metrics.
+- `ledger://agents/{id}/sessions/{session_id}`: Detailed trace of a specific session (direct read).
+- `ledger://ledger/health`: Projection lag, DLQ status, and system health.
+
 ## 🛡 Business Rules Enforced
 1. **Rule #1**: Rigid state machine for `LoanApplication`.
 2. **Rule #2**: `AgentSessionStarted` must be the first event for any AI session.

@@ -159,6 +159,9 @@ class LoanApplicationAggregate(BaseAggregate):
 
     # Command methods
     def submit_application(self, event: ApplicationSubmitted) -> None:
+        """Strict invariant check: fail if already submitted."""
+        if self.state is not None:
+            raise DomainError(f"Application {self.stream_id} is already in state {self.state}. Duplicate submission rejected.")
         self._assert_valid_transition(ApplicationState.SUBMITTED)
         self.append_event(event)
 

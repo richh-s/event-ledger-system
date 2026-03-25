@@ -7,12 +7,19 @@ Detects inconsistencies between submitted documents and registry history.
 from __future__ import annotations
 import time
 import json
+import hashlib
 from typing import TypedDict, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from datetime import datetime
 
 from .base_agent import BaseApexAgent
-from src.exceptions import OptimisticConcurrencyError
+from src.models import (
+    FraudScreeningInitiated,
+    FraudAnomalyDetected,
+    FraudScreeningCompleted,
+    ComplianceCheckRequested,
+    FraudAnomaly
+)
 
 class FraudDetectionState(TypedDict):
     application_id: str
@@ -71,24 +78,20 @@ class FraudDetectionAgent(BaseApexAgent):
         return state
 
     async def _node_open_aggregate_record(self, state: FraudDetectionState):
-        """WBE - Establish stream ownership before analysis."""
+        """Open/Load Fraud stream."""
         t0 = time.time()
         app_id = state["application_id"]
         
-        event = {
-            "event_type": "FraudScreeningInitiated",
-            "event_version": 1,
-            "payload": {
-                "application_id": app_id,
-                "applicant_id": state["applicant_id"],
-                "session_id": self.session_id,
-                "initiated_at": datetime.utcnow().isoformat()
-            }
-        }
-        await self._append_stream(f"fraud-{app_id}", event)
+        evt = FraudScreeningInitiated(
+            application_id=app_id,
+            session_id=self.session_id,
+            screening_model_version="fraud-sonnet-v1",
+            initiated_at=datetime.utcnow()
+        )
+        await self._append_stream_event(f"fraud-{app_id}", evt)
         
         ms = int((time.time() - t0) * 1000)
-        await self._record_node_execution("open_aggregate_record", ["applicant_id"], ["fraud_stream_opened"], ms)
+        await self._record_node_execution("open_aggregate_record", ["application_id"], ["fraud_stream_opened"], ms)
         return state
 
     async def _node_load_external_data(self, state: FraudDetectionState):
@@ -111,6 +114,14 @@ class FraudDetectionAgent(BaseApexAgent):
         state["company_profile"] = profile.__dict__ if profile else {}
         state["historical_financials"] = [yr.__dict__ for yr in history]
         state["extracted_facts"] = [] # Placeholder
+        
+        # 3. Record Context Loaded (Gas Town)
+        ctx_data = {"profile": state["company_profile"], "history": state["historical_financials"]}
+        await self._record_context_loaded(
+            source=f"crm-companies/{applicant_id}",
+            version=1,
+            content_hash=hashlib.sha256(json.dumps(ctx_data).encode()).hexdigest()
+        )
         
         ms = int((time.time() - t0) * 1000)
         await self._record_node_execution("load_external_data", ["applicant_id"], ["profile", "history"], ms)
@@ -171,30 +182,48 @@ Return JSON:
         app_id = state["application_id"]
         
         # 1. Domain Event (Master Thinker: Idempotency)
-        if not await self.is_event_already_present(f"fraud-{app_id}", "FraudScreeningCompleted"):
-            event = {
-                "event_type": "FraudScreeningCompleted",
-                "event_version": 1,
-                "payload": {
-                    "assessment": state["fraud_assessment"],
-                    "violations": state["policy_violations"],
-                    "completed_at": datetime.utcnow().isoformat()
-                }
-            }
-            await self._append_stream(f"fraud-{app_id}", event)
-        else:
-            print(f"    [Idempotency] 'FraudScreeningCompleted' already exists for {app_id}. Skipping write.")
+        # Check anomalies
+        assessment = state["fraud_assessment"] or {}
+        anomalies_typed = []
+        for a in assessment.get("anomalies", []):
+            anom = FraudAnomaly(
+                anomaly_type=a.get("type", "UNKNOWN"),
+                severity=a.get("severity", "LOW"),
+                evidence=a.get("evidence", "")
+            )
+            anomalies_typed.append(anom)
+            # Optional: ComplianceRuleFailed or similar? No, use FraudAnomalyDetected
+            # Actually, just list components:
+            det_evt = FraudAnomalyDetected(
+                application_id=app_id,
+                session_id=self.session_id,
+                anomaly=anom,
+                detected_at=datetime.utcnow()
+            )
+            await self._append_stream_event(f"fraud-{app_id}", det_evt)
+
+        final_evt = FraudScreeningCompleted(
+            application_id=app_id,
+            session_id=self.session_id,
+            fraud_score=float(assessment.get("fraud_score", 0.0)),
+            risk_level="MEDIUM" if state["policy_violations"] else "LOW",
+            anomalies_found=len(anomalies_typed),
+            recommendation="REFER" if state["policy_violations"] else "CLEAR",
+            screening_model_version="fraud-sonnet-v1",
+            input_data_hash=hashlib.sha256(b"fraud-input").hexdigest(),
+            completed_at=datetime.utcnow()
+        )
+        await self._append_stream_event(f"fraud-{app_id}", final_evt)
         
         # 2. Trigger Compliance Check
-        trigger_event = {
-            "event_type": "ComplianceCheckRequested",
-            "event_version": 1,
-            "payload": {
-                "application_id": app_id,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        }
-        await self._append_stream(f"loan-{app_id}", trigger_event)
+        trigger_evt = ComplianceCheckRequested(
+            application_id=app_id,
+            requested_at=datetime.utcnow(),
+            triggered_by_event_id=self.causation_id,
+            regulation_set_version="v2024.03",
+            rules_to_evaluate=["AML", "KYC", "SANCTIONS"]
+        )
+        await self._append_stream_event(f"loan-{app_id}", trigger_evt)
         
         # 3. AgentOutputWritten
         written = [

@@ -1,4 +1,8 @@
 """
+ledger/schema/events.py
+=======================
+CANONICAL EVENT SCHEMA — THE LEDGER (WEEKS 9-10)
+
 Single source of truth for every event in the system.
 Import from here everywhere. Do NOT redefine event models elsewhere.
 
@@ -9,104 +13,31 @@ Import from here everywhere. Do NOT redefine event models elsewhere.
   4. CreditRecord      stream: "credit-{application_id}"
   5. ComplianceRecord  stream: "compliance-{application_id}"
   6. FraudScreening    stream: "fraud-{application_id}"
-  7. AuditLedger       stream: "audit-{entity_id}"
+  7. AuditLedger       stream: "audit-{entity_type}-{id}"
 """
 from __future__ import annotations
-
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Any
+from typing import Any, Annotated, Optional, Union
 from uuid import UUID, uuid4
+import json
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
-# ============================================================================
-# Errors
-# ============================================================================
 
-class DomainError(Exception):
-    """Raised when a domain invariant or business rule is violated."""
+# ─── TYPE DEFINITIONS ─────────────────────────────────────────────────────────
 
-class OptimisticConcurrencyError(Exception):
-    """Raised when expected_version doesn't match the current stream version."""
+# Canonical Money Type: Ensures Decimal(10.0) -> float(10.0) for JSONB 'number' storage.
+# This eliminates "requested_amount_usd": "250000.0" (string) in the DB.
+NumericAmount = Annotated[
+    Decimal,
+    PlainSerializer(lambda x: float(x) if x is not None else None, return_type=float)
+]
 
-    def __init__(self, stream_id: str, expected: int, actual: int):
-        self.stream_id = stream_id
-        self.expected = expected
-        self.actual = actual
-        super().__init__(f"OCC on '{stream_id}': expected v{expected}, actual v{actual}")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "error_type": self.__class__.__name__,
-            "stream_id": self.stream_id,
-            "expected_version": self.expected,
-            "actual_version": self.actual,
-            "suggested_action": "reload_stream_and_retry",
-        }
-
-# ============================================================================
-# Store-facing wrappers
-# ============================================================================
-
-class StoredEvent(BaseModel):
-    """Stored-event wrapper returned by the event store load paths."""
-    model_config = ConfigDict(frozen=True)
-
-    event_id: UUID
-    stream_id: str
-    stream_position: int
-    global_position: int | None = None
-    event_type: str
-    event_version: int = 1
-    payload: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    recorded_at: datetime
-    
-    @field_validator('payload', 'metadata', mode='before')
-    @classmethod
-    def decode_json(cls, v: Any) -> Any:
-        if isinstance(v, str):
-            try:
-                import json
-                return json.loads(v)
-            except Exception:
-                return v
-        return v
-
-    def __getitem__(self, key: str) -> Any:
-        return getattr(self, key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
-
-    def with_payload(self, payload: dict[str, Any], version: int | None = None) -> "StoredEvent":
-        return self.model_copy(
-            update={
-                "payload": payload,
-                "event_version": version if version is not None else self.event_version,
-            }
-        )
-
-class StreamMetadata(BaseModel):
-    """Metadata row for an event stream."""
-    model_config = ConfigDict(frozen=True)
-
-    stream_id: str
-    aggregate_type: str
-    current_version: int
-    created_at: datetime | None = None
-    archived_at: datetime | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 # ─── ENUMS ───────────────────────────────────────────────────────────────────
 
 class RiskTier(str, Enum):
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-
-class Severity(str, Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
@@ -117,16 +48,16 @@ class ApplicationState(str, Enum):
     DOCUMENTS_UPLOADED = "DOCUMENTS_UPLOADED"
     DOCUMENTS_PROCESSED = "DOCUMENTS_PROCESSED"
     CREDIT_ANALYSIS_REQUESTED = "CREDIT_ANALYSIS_REQUESTED"
-    CREDIT_COMPLETE = "CREDIT_COMPLETE"
+    CREDIT_ANALYSIS_COMPLETE = "CREDIT_ANALYSIS_COMPLETE"
     FRAUD_SCREENING_REQUESTED = "FRAUD_SCREENING_REQUESTED"
-    FRAUD_COMPLETE = "FRAUD_COMPLETE"
+    FRAUD_SCREENING_COMPLETE = "FRAUD_SCREENING_COMPLETE"
     COMPLIANCE_CHECK_REQUESTED = "COMPLIANCE_CHECK_REQUESTED"
     COMPLIANCE_CHECK_COMPLETE = "COMPLIANCE_CHECK_COMPLETE"
     PENDING_DECISION = "PENDING_DECISION"
     PENDING_HUMAN_REVIEW = "PENDING_HUMAN_REVIEW"
     APPROVED = "APPROVED"
     DECLINED = "DECLINED"
-    COMPLIANCE_BLOCKED = "COMPLIANCE_BLOCKED"
+    DECLINED_COMPLIANCE = "DECLINED_COMPLIANCE"
     REFERRED = "REFERRED"
 
 class DocumentType(str, Enum):
@@ -134,8 +65,6 @@ class DocumentType(str, Enum):
     INCOME_STATEMENT = "income_statement"
     BALANCE_SHEET = "balance_sheet"
     CASH_FLOW_STATEMENT = "cash_flow_statement"
-    FINANCIAL_WORKBOOK = "financial_workbook"
-    FINANCIAL_SUMMARY = "financial_summary"
     BANK_STATEMENTS = "bank_statements"
     TAX_RETURNS = "tax_returns"
 
@@ -172,54 +101,47 @@ class ComplianceVerdict(str, Enum):
     BLOCKED = "BLOCKED"
     CONDITIONAL = "CONDITIONAL"
 
-# ─── VALUE OBJECTS ────────────────────────────────────────────────────────────
 
-# Define a numeric serializer for Decimal to ensure it's stored as a number in JSONB
-NumericAmount = Annotated[
-    Decimal,
-    PlainSerializer(lambda x: float(x) if x is not None else None, return_type=float)
-]
+# ─── VALUE OBJECTS ────────────────────────────────────────────────────────────
 
 class FinancialFacts(BaseModel):
     """Structured facts extracted from a financial statement PDF by the Week 3 pipeline."""
     model_config = ConfigDict(frozen=True)
-
     # Income Statement (GAAP)
-    total_revenue: NumericAmount | None = None
-    gross_profit: NumericAmount | None = None
-    operating_expenses: NumericAmount | None = None
-    operating_income: NumericAmount | None = None
-    ebitda: NumericAmount | None = None
-    depreciation_amortization: NumericAmount | None = None
-    interest_expense: NumericAmount | None = None
-    income_before_tax: NumericAmount | None = None
-    tax_expense: NumericAmount | None = None
-    net_income: NumericAmount | None = None
+    total_revenue: Decimal | None = None
+    gross_profit: Decimal | None = None
+    operating_expenses: Decimal | None = None
+    operating_income: Decimal | None = None
+    ebitda: Decimal | None = None
+    depreciation_amortization: Decimal | None = None
+    interest_expense: Decimal | None = None
+    income_before_tax: Decimal | None = None
+    tax_expense: Decimal | None = None
+    net_income: Decimal | None = None
     # Balance Sheet (GAAP)
-    total_assets: NumericAmount | None = None
-    current_assets: NumericAmount | None = None
-    cash_and_equivalents: NumericAmount | None = None
-    accounts_receivable: NumericAmount | None = None
-    inventory: NumericAmount | None = None
-    total_liabilities: NumericAmount | None = None
-    current_liabilities: NumericAmount | None = None
-    long_term_debt: NumericAmount | None = None
-    total_equity: NumericAmount | None = None
+    total_assets: Decimal | None = None
+    current_assets: Decimal | None = None
+    cash_and_equivalents: Decimal | None = None
+    accounts_receivable: Decimal | None = None
+    inventory: Decimal | None = None
+    total_liabilities: Decimal | None = None
+    current_liabilities: Decimal | None = None
+    long_term_debt: Decimal | None = None
+    total_equity: Decimal | None = None
     # Cash Flow
-    operating_cash_flow: NumericAmount | None = None
-    investing_cash_flow: NumericAmount | None = None
-    financing_cash_flow: NumericAmount | None = None
-    free_cash_flow: NumericAmount | None = None
+    operating_cash_flow: Decimal | None = None
+    investing_cash_flow: Decimal | None = None
+    financing_cash_flow: Decimal | None = None
+    free_cash_flow: Decimal | None = None
     # Computed ratios (pipeline computes after extraction)
     debt_to_equity: float | None = None
     current_ratio: float | None = None
     debt_to_ebitda: float | None = None
     interest_coverage: float | None = None
     gross_margin: float | None = None
-    ebitda_margin: float | None = None
     net_margin: float | None = None
     # Provenance
-    fiscal_year_end: str | None = None  # "2024-12-31"
+    fiscal_year_end: str | None = None       # "2024-12-31"
     currency: str = "USD"
     gaap_compliant: bool = True
     # Extraction quality metadata
@@ -227,52 +149,127 @@ class FinancialFacts(BaseModel):
     page_references: dict[str, str] = Field(default_factory=dict)
     extraction_notes: list[str] = Field(default_factory=list)
     balance_sheet_balances: bool | None = None
-    balance_discrepancy_usd: NumericAmount | None = None
+    balance_discrepancy_usd: Decimal | None = None
 
 class FraudAnomaly(BaseModel):
     model_config = ConfigDict(frozen=True)
-
     anomaly_type: FraudAnomalyType
     description: str
-    severity: Severity
+    severity: str                           # "LOW" | "MEDIUM" | "HIGH"
     evidence: str
     affected_fields: list[str] = Field(default_factory=list)
 
 class CreditDecision(BaseModel):
     model_config = ConfigDict(frozen=True)
-
     risk_tier: RiskTier
     recommended_limit_usd: NumericAmount
-    confidence: float = Field(ge=0.0, le=1.0)  # pyre-ignore[6]
+    confidence: float
     rationale: str
     key_concerns: list[str] = Field(default_factory=list)
     data_quality_caveats: list[str] = Field(default_factory=list)
     policy_overrides_applied: list[str] = Field(default_factory=list)
 
+
+# ─── ERRORS ───────────────────────────────────────────────────────────────────
+
+class LedgerError(Exception):
+    """Base class for all exceptions raised by the Ledger."""
+    pass
+
+class DomainError(LedgerError):
+    """Raised when a domain invariant or business rule is violated."""
+    pass
+
+class OptimisticConcurrencyError(LedgerError):
+    """Raised when expected_version doesn't match the current stream version."""
+
+    def __init__(self, stream_id: str, expected: int, actual: int):
+        self.stream_id = stream_id
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"Optimistic concurrency conflict on stream '{stream_id}'. "
+            f"Expected version: {expected}, Actual version: {actual}"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "error_type": self.__class__.__name__,
+            "stream_id": self.stream_id,
+            "expected_version": self.expected,
+            "actual_version": self.actual,
+            "suggested_action": "reload_stream_and_retry",
+        }
+
+class StreamArchivedError(LedgerError):
+    """Raised when attempting to append events to an archived stream."""
+    def __init__(self, stream_id: str):
+        self.stream_id = stream_id
+        super().__init__(f"Cannot append to archived stream '{stream_id}'.")
+
+# ─── STORE-FACING WRAPPERS ──────────────────────────────────────────────────
+
+class StoredEvent(BaseModel):
+    """Stored-event wrapper returned by the event store load paths."""
+    model_config = ConfigDict(frozen=True)
+
+    event_id: UUID
+    stream_id: str
+    stream_position: int
+    global_position: int | None = None
+    event_type: str
+    event_version: int = 1
+    payload: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    recorded_at: datetime
+
+    @field_validator('payload', mode='before')
+    @classmethod
+    def decode_payload(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return v
+        return v
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+class StreamMetadata(BaseModel):
+    """Metadata row for an event stream."""
+    model_config = ConfigDict(frozen=True)
+
+    stream_id: str
+    aggregate_type: str
+    current_version: int
+    created_at: datetime | None = None
+    archived_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 # ─── BASE EVENT ───────────────────────────────────────────────────────────────
 
 class BaseEvent(BaseModel):
     model_config = ConfigDict(frozen=True)
-
     event_type: str
     event_version: int = 1
     event_id: UUID = Field(default_factory=uuid4)
-    recorded_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    recorded_at: datetime | None = None
 
     def to_payload(self) -> dict:
-        """Dump model to a dict, excluding base event fields."""
-        data = self.model_dump(mode='json')
-        # Exclude fields that are part of the base event wrapper
-        del data['event_type']
-        del data['event_version']
-        del data['event_id']
-        del data['recorded_at']
-        del data['metadata']
-        return data
+        """Returns the domain payload for storage in JSONB. Uses Pydantic JSON mode."""
+        d = self.model_dump(mode='json')
+        # Remove system-level metadata from the business payload
+        for k in ('event_type', 'event_version', 'event_id', 'metadata', 'recorded_at'):
+            d.pop(k, None)
+        return d
 
     def to_store_dict(self) -> dict:
-        """Return a dict shape suitable for the event store."""
         return {
             "event_type": self.event_type,
             "event_version": self.event_version,
@@ -280,11 +277,11 @@ class BaseEvent(BaseModel):
             "metadata": self.metadata,
         }
 
+
 # ─── AGGREGATE 1: LOAN APPLICATION ───────────────────────────────────────────
 # stream: "loan-{application_id}"
 
 class ApplicationSubmitted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ApplicationSubmitted"
     application_id: str
     applicant_id: str
@@ -298,7 +295,6 @@ class ApplicationSubmitted(BaseEvent):
     application_reference: str
 
 class DocumentUploadRequested(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "DocumentUploadRequested"
     application_id: str
     required_document_types: list[DocumentType]
@@ -306,7 +302,6 @@ class DocumentUploadRequested(BaseEvent):
     requested_by: str
 
 class DocumentUploaded(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "DocumentUploaded"
     application_id: str
     document_id: str
@@ -321,7 +316,6 @@ class DocumentUploaded(BaseEvent):
     uploaded_by: str
 
 class DocumentUploadFailed(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "DocumentUploadFailed"
     application_id: str
     document_type: DocumentType
@@ -331,7 +325,6 @@ class DocumentUploadFailed(BaseEvent):
     attempted_at: datetime
 
 class CreditAnalysisRequested(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "CreditAnalysisRequested"
     application_id: str
     requested_at: datetime
@@ -339,14 +332,12 @@ class CreditAnalysisRequested(BaseEvent):
     priority: str = "NORMAL"
 
 class FraudScreeningRequested(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "FraudScreeningRequested"
     application_id: str
     requested_at: datetime
     triggered_by_event_id: str
 
 class ComplianceCheckRequested(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ComplianceCheckRequested"
     application_id: str
     requested_at: datetime
@@ -355,7 +346,6 @@ class ComplianceCheckRequested(BaseEvent):
     rules_to_evaluate: list[str]
 
 class DecisionRequested(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "DecisionRequested"
     application_id: str
     requested_at: datetime
@@ -363,14 +353,13 @@ class DecisionRequested(BaseEvent):
     triggered_by_event_id: str
 
 class DecisionGenerated(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "DecisionGenerated"
     event_version: int = 2
     application_id: str
     orchestrator_session_id: str
     recommendation: str
-    confidence: float = Field(ge=0.0, le=1.0)  # pyre-ignore[6]
-    approved_amount_usd: NumericAmount | None = None
+    confidence: float
+    approved_amount_usd: Optional[NumericAmount] = None
     conditions: list[str] = Field(default_factory=list)
     executive_summary: str
     key_risks: list[str] = Field(default_factory=list)
@@ -379,7 +368,6 @@ class DecisionGenerated(BaseEvent):
     generated_at: datetime
 
 class HumanReviewRequested(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "HumanReviewRequested"
     application_id: str
     reason: str
@@ -388,7 +376,6 @@ class HumanReviewRequested(BaseEvent):
     requested_at: datetime
 
 class HumanReviewCompleted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "HumanReviewCompleted"
     application_id: str
     reviewer_id: str
@@ -399,11 +386,10 @@ class HumanReviewCompleted(BaseEvent):
     reviewed_at: datetime
 
 class ApplicationApproved(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ApplicationApproved"
     application_id: str
     approved_amount_usd: NumericAmount
-    interest_rate_pct: float = Field(ge=0.0)  # pyre-ignore[6]
+    interest_rate_pct: float
     term_months: int
     conditions: list[str] = Field(default_factory=list)
     approved_by: str
@@ -411,7 +397,6 @@ class ApplicationApproved(BaseEvent):
     approved_at: datetime
 
 class ApplicationDeclined(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ApplicationDeclined"
     application_id: str
     decline_reasons: list[str]
@@ -420,19 +405,18 @@ class ApplicationDeclined(BaseEvent):
     adverse_action_codes: list[str] = Field(default_factory=list)
     declined_at: datetime
 
+
 # ─── AGGREGATE 2: DOCUMENT PACKAGE ───────────────────────────────────────────
 # stream: "docpkg-{application_id}"
 
-class PackageCreated(BaseEvent):
-    model_config = ConfigDict(frozen=True)
-    event_type: str = "PackageCreated"
+class DocumentPackageCreated(BaseEvent):
+    event_type: str = "DocumentPackageCreated"
     package_id: str
     application_id: str
     required_documents: list[DocumentType]
     created_at: datetime
 
 class DocumentAdded(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "DocumentAdded"
     package_id: str
     document_id: str
@@ -442,7 +426,6 @@ class DocumentAdded(BaseEvent):
     added_at: datetime
 
 class DocumentFormatValidated(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "DocumentFormatValidated"
     package_id: str
     document_id: str
@@ -452,7 +435,6 @@ class DocumentFormatValidated(BaseEvent):
     validated_at: datetime
 
 class DocumentFormatRejected(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "DocumentFormatRejected"
     package_id: str
     document_id: str
@@ -460,7 +442,6 @@ class DocumentFormatRejected(BaseEvent):
     rejected_at: datetime
 
 class ExtractionStarted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ExtractionStarted"
     package_id: str
     document_id: str
@@ -470,7 +451,6 @@ class ExtractionStarted(BaseEvent):
     started_at: datetime
 
 class ExtractionCompleted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ExtractionCompleted"
     package_id: str
     document_id: str
@@ -482,7 +462,6 @@ class ExtractionCompleted(BaseEvent):
     completed_at: datetime
 
 class ExtractionFailed(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ExtractionFailed"
     package_id: str
     document_id: str
@@ -492,11 +471,10 @@ class ExtractionFailed(BaseEvent):
     failed_at: datetime
 
 class QualityAssessmentCompleted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "QualityAssessmentCompleted"
     package_id: str
     document_id: str
-    overall_confidence: float = Field(ge=0.0, le=1.0)  # pyre-ignore[6]
+    overall_confidence: float
     is_coherent: bool
     anomalies: list[str] = Field(default_factory=list)
     critical_missing_fields: list[str] = Field(default_factory=list)
@@ -505,7 +483,6 @@ class QualityAssessmentCompleted(BaseEvent):
     assessed_at: datetime
 
 class PackageReadyForAnalysis(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "PackageReadyForAnalysis"
     package_id: str
     application_id: str
@@ -514,20 +491,11 @@ class PackageReadyForAnalysis(BaseEvent):
     quality_flag_count: int
     ready_at: datetime
 
+
 # ─── AGGREGATE 3: AGENT SESSION ──────────────────────────────────────────────
 # stream: "agent-{agent_type}-{session_id}"
 
-class AgentEvent(BaseEvent):
-    """Generic event for agent sessions and domain triggers."""
-    model_config = ConfigDict(frozen=False)
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-    def to_payload(self) -> dict[str, Any]:
-        return self.payload
-
-
 class AgentSessionStarted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentSessionStarted"
     session_id: str
     agent_type: AgentType
@@ -540,7 +508,6 @@ class AgentSessionStarted(BaseEvent):
     started_at: datetime
 
 class AgentInputValidated(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentInputValidated"
     session_id: str
     agent_type: AgentType
@@ -550,7 +517,6 @@ class AgentInputValidated(BaseEvent):
     validated_at: datetime
 
 class AgentInputValidationFailed(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentInputValidationFailed"
     session_id: str
     agent_type: AgentType
@@ -561,7 +527,6 @@ class AgentInputValidationFailed(BaseEvent):
 
 class AgentNodeExecuted(BaseEvent):
     """One LangGraph node completed. Appended after EVERY node in EVERY agent."""
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentNodeExecuted"
     session_id: str
     agent_type: AgentType
@@ -578,7 +543,6 @@ class AgentNodeExecuted(BaseEvent):
 
 class AgentToolCalled(BaseEvent):
     """Agent called a registry query or MCP tool."""
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentToolCalled"
     session_id: str
     agent_type: AgentType
@@ -590,29 +554,34 @@ class AgentToolCalled(BaseEvent):
 
 class AgentContextLoaded(BaseEvent):
     """Memory Snapshot: Invariant that context MUST be loaded before decisions."""
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentContextLoaded"
     session_id: str
     agent_type: AgentType
     context_source: str # e.g. "loan-APP123"
-    context_version: int
+    context_version: int 
     context_hash: str
     loaded_at: datetime
 
+class AgentEvent(BaseEvent):
+    """Generic event for agent sessions and domain triggers."""
+    model_config = ConfigDict(frozen=False)
+    event_type: str = "AgentEvent"
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.payload
+
 class AgentOutputWritten(BaseEvent):
     """Agent appended its result events to domain aggregate streams."""
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentOutputWritten"
     session_id: str
     agent_type: AgentType
     application_id: str
-    context_event_id: str # REQUIRED: Must reference an AgentContextLoaded event in this session
     events_written: list[dict]
     output_summary: str
     written_at: datetime
 
 class AgentSessionCompleted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentSessionCompleted"
     session_id: str
     agent_type: AgentType
@@ -620,13 +589,12 @@ class AgentSessionCompleted(BaseEvent):
     total_nodes_executed: int
     total_llm_calls: int
     total_tokens_used: int
-    total_cost_usd: float = Field(ge=0.0)  # pyre-ignore[6]
+    total_cost_usd: float
     total_duration_ms: int
     next_agent_triggered: str | None = None
     completed_at: datetime
 
 class AgentSessionFailed(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentSessionFailed"
     session_id: str
     agent_type: AgentType
@@ -638,7 +606,6 @@ class AgentSessionFailed(BaseEvent):
     failed_at: datetime
 
 class AgentSessionRecovered(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AgentSessionRecovered"
     session_id: str
     agent_type: AgentType
@@ -647,18 +614,17 @@ class AgentSessionRecovered(BaseEvent):
     recovery_point: str
     recovered_at: datetime
 
+
 # ─── AGGREGATE 4: CREDIT RECORD ──────────────────────────────────────────────
 # stream: "credit-{application_id}"
 
 class CreditRecordOpened(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "CreditRecordOpened"
     application_id: str
     applicant_id: str
     opened_at: datetime
 
 class HistoricalProfileConsumed(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "HistoricalProfileConsumed"
     application_id: str
     session_id: str
@@ -670,7 +636,6 @@ class HistoricalProfileConsumed(BaseEvent):
     consumed_at: datetime
 
 class ExtractedFactsConsumed(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ExtractedFactsConsumed"
     application_id: str
     session_id: str
@@ -680,7 +645,6 @@ class ExtractedFactsConsumed(BaseEvent):
     consumed_at: datetime
 
 class CreditAnalysisCompleted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "CreditAnalysisCompleted"
     event_version: int = 2
     application_id: str
@@ -694,7 +658,6 @@ class CreditAnalysisCompleted(BaseEvent):
     completed_at: datetime
 
 class CreditAnalysisDeferred(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "CreditAnalysisDeferred"
     application_id: str
     session_id: str
@@ -702,11 +665,11 @@ class CreditAnalysisDeferred(BaseEvent):
     quality_issues: list[str]
     deferred_at: datetime
 
+
 # ─── AGGREGATE 5: COMPLIANCE RECORD ──────────────────────────────────────────
 # stream: "compliance-{application_id}"
 
 class ComplianceCheckInitiated(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ComplianceCheckInitiated"
     application_id: str
     session_id: str
@@ -715,7 +678,6 @@ class ComplianceCheckInitiated(BaseEvent):
     initiated_at: datetime
 
 class ComplianceRulePassed(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ComplianceRulePassed"
     application_id: str
     session_id: str
@@ -727,7 +689,6 @@ class ComplianceRulePassed(BaseEvent):
     evaluated_at: datetime
 
 class ComplianceRuleFailed(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ComplianceRuleFailed"
     application_id: str
     session_id: str
@@ -742,7 +703,6 @@ class ComplianceRuleFailed(BaseEvent):
     evaluated_at: datetime
 
 class ComplianceRuleNoted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ComplianceRuleNoted"
     application_id: str
     session_id: str
@@ -753,7 +713,6 @@ class ComplianceRuleNoted(BaseEvent):
     evaluated_at: datetime
 
 class ComplianceCheckCompleted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "ComplianceCheckCompleted"
     application_id: str
     session_id: str
@@ -765,11 +724,11 @@ class ComplianceCheckCompleted(BaseEvent):
     overall_verdict: ComplianceVerdict
     completed_at: datetime
 
+
 # ─── AGGREGATE 6: FRAUD SCREENING ────────────────────────────────────────────
 # stream: "fraud-{application_id}"
 
 class FraudScreeningInitiated(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "FraudScreeningInitiated"
     application_id: str
     session_id: str
@@ -777,7 +736,6 @@ class FraudScreeningInitiated(BaseEvent):
     initiated_at: datetime
 
 class FraudAnomalyDetected(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "FraudAnomalyDetected"
     application_id: str
     session_id: str
@@ -785,11 +743,10 @@ class FraudAnomalyDetected(BaseEvent):
     detected_at: datetime
 
 class FraudScreeningCompleted(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "FraudScreeningCompleted"
     application_id: str
     session_id: str
-    fraud_score: float = Field(ge=0.0, le=1.0)  # pyre-ignore[6]
+    fraud_score: float
     risk_level: str
     anomalies_found: int
     recommendation: str
@@ -797,11 +754,11 @@ class FraudScreeningCompleted(BaseEvent):
     input_data_hash: str
     completed_at: datetime
 
+
 # ─── AGGREGATE 7: AUDIT LEDGER ───────────────────────────────────────────────
-# stream: "audit-{entity_id}"
+# stream: "audit-{entity_type}-{id}"
 
 class AuditIntegrityCheckRun(BaseEvent):
-    model_config = ConfigDict(frozen=True)
     event_type: str = "AuditIntegrityCheckRun"
     entity_type: str
     entity_id: str
@@ -809,8 +766,10 @@ class AuditIntegrityCheckRun(BaseEvent):
     events_verified_count: int
     integrity_hash: str
     previous_hash: str | None
+    last_event_position: int = 0
     chain_valid: bool
     tamper_detected: bool
+
 
 # ─── EVENT REGISTRY ───────────────────────────────────────────────────────────
 
@@ -830,7 +789,7 @@ EVENT_REGISTRY: dict[str, type[BaseEvent]] = {
     "ApplicationApproved": ApplicationApproved,
     "ApplicationDeclined": ApplicationDeclined,
     # DocumentPackage
-    "PackageCreated": PackageCreated,
+    "DocumentPackageCreated": DocumentPackageCreated,
     "DocumentAdded": DocumentAdded,
     "DocumentFormatValidated": DocumentFormatValidated,
     "DocumentFormatRejected": DocumentFormatRejected,
@@ -846,6 +805,7 @@ EVENT_REGISTRY: dict[str, type[BaseEvent]] = {
     "AgentNodeExecuted": AgentNodeExecuted,
     "AgentToolCalled": AgentToolCalled,
     "AgentContextLoaded": AgentContextLoaded,
+    "AgentEvent": AgentEvent,
     "AgentOutputWritten": AgentOutputWritten,
     "AgentSessionCompleted": AgentSessionCompleted,
     "AgentSessionFailed": AgentSessionFailed,
@@ -870,14 +830,8 @@ EVENT_REGISTRY: dict[str, type[BaseEvent]] = {
     "AuditIntegrityCheckRun": AuditIntegrityCheckRun,
 }
 
-def deserialize_event(event_type: str, payload: dict[str, Any]) -> BaseEvent:
-    """Deserialize an event from its type and payload."""
-    if event_type not in EVENT_REGISTRY:
+def deserialize_event(event_type: str, payload: dict) -> BaseEvent:
+    cls = EVENT_REGISTRY.get(event_type)
+    if not cls:
         raise ValueError(f"Unknown event_type: {event_type!r}")
-    cls = EVENT_REGISTRY[event_type]
-
-    # To prevent potential conflicts, ensure the payload doesn't contain
-    # the 'event_type' key, as it's passed explicitly.
-    payload.pop('event_type', None)
-
-    return cls.model_validate({"event_type": event_type, **payload})
+    return cls(event_type=event_type, **payload)

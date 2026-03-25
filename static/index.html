@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apex Ledger Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Sidebar: Applications List -->
+  <aside class="sidebar glass">
+    <h1>Apex Ledger</h1>
+    <h2>Applications</h2>
+    
+    <button id="btn-refresh" class="primary-btn" style="width: 100%; margin-bottom: 24px;">
+      Refresh List
+    </button>
+    
+    <ul id="app-list">
+      <!-- Injected by Javascript -->
+    </ul>
+  </aside>
+
+  <!-- Main View -->
+  <main class="main-content glass" id="main-view">
+    
+    <div class="empty-state" id="empty-state" style="display: flex;">
+      <svg fill="currentColor" viewBox="0 0 24 24">
+        <path d="M14 2H6C4.9 2 4.01 2.9 4.01 4L4 20C4 21.1 4.89 22 5.99 22H18C19.1 22 20 21.1 20 20V8L14 2ZM18 20H6V4H13V9H18V20ZM12 11C10.9 11 10 11.9 10 13C10 14.1 10.9 15 12 15C13.1 15 14 14.1 14 13C14 11.9 13.1 11 12 11Z"></path>
+      </svg>
+      <h2>Select an Application</h2>
+      <p>Click a submitted loan application to reconstruct its temporal history and view the regulatory examination package.</p>
+    </div>
+
+    <div id="reconstruction-view" style="display: none;">
+      <header style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 24px;">
+        <div>
+          <h1 id="app-title">Application: ---</h1>
+          <div style="display: flex; gap: 12px; align-items: center;">
+            <span class="badge success" id="val-badge-schema">Schema Valid</span>
+            <span class="badge success" id="val-badge-audit">Integrity Verified</span>
+          </div>
+        </div>
+      </header>
+
+      <div class="dashboard-grid">
+        <div class="stat-card">
+          <h3>Current State</h3>
+          <div class="stat-value" id="stat-state" style="color: var(--status-pending);">---</div>
+        </div>
+        <div class="stat-card">
+          <h3>Final Decision</h3>
+          <div class="stat-value" id="stat-decision">---</div>
+        </div>
+        <div class="stat-card">
+          <h3>Requested Amount</h3>
+          <div class="stat-value" id="stat-amount">$0</div>
+        </div>
+        <div class="stat-card">
+          <h3>Filtered Mock Events</h3>
+          <div class="stat-value" id="stat-filtered" style="color: var(--text-dim);">0</div>
+        </div>
+      </div>
+
+      <h2>Reconstructed Narrative</h2>
+      <div class="narrative-box" id="narrative-box">
+        Generating narrative...
+      </div>
+
+      <h2 style="margin-top: 40px;">Temporal Timeline</h2>
+      <div class="timeline" id="timeline-box">
+        <!-- Rendered by JS -->
+      </div>
+
+      <h2 style="margin-top: 40px;">Temporal 'What-If' Simulation</h2>
+      <p style="color: var(--text-dim); margin-bottom: 16px;">Re-evaluates the historic decision chain locally against a different model parameter strictly enforcing immutability.</p>
+      
+      <div class="whatif-tool glass" style="padding: 24px; display: block; background: rgba(59, 130, 246, 0.05);">
+        <div style="display: flex; gap: 16px;">
+          <input type="text" id="whatif-model" value="Apex-Risk-V3-Aggressive" placeholder="Alternate Model Version">
+          <button class="primary-btn" id="btn-whatif">Simulate Hypothesis</button>
+        </div>
+        <div id="whatif-result" style="margin-top: 24px; display: none;">
+          <pre class="code-block" id="whatif-code"></pre>
+        </div>
+      </div>
+
+      <h2 style="margin-top: 40px;">Regulatory Examination Package (Raw)</h2>
+      <p style="color: var(--text-dim); margin-bottom: 16px;">The reconstructed examination package across all 7 causally linked aggregate streams (minus verbose raw payloads for the sake of UI rendering).</p>
+      
+      <pre class="code-block" id="raw-package-box">Loading package data...</pre>
+
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

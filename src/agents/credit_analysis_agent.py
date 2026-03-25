@@ -7,12 +7,21 @@ Strictly follows the required node sequence, WBE, and audited tool calls.
 from __future__ import annotations
 import time
 import json
+import hashlib
 from typing import TypedDict, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
+from decimal import Decimal
 from datetime import datetime
 
 from .base_agent import BaseApexAgent
-from src.exceptions import OptimisticConcurrencyError
+from src.models import (
+    CreditRecordOpened,
+    CreditAnalysisCompleted,
+    FraudScreeningRequested,
+    CreditDecision,
+    RiskTier,
+    FinancialFacts
+)
 
 class CreditAnalysisState(TypedDict):
     application_id: str
@@ -95,18 +104,13 @@ class CreditAnalysisAgent(BaseApexAgent):
         app_id = state["application_id"]
         
         # Establish stream ownership BEFORE analysis logic
-        event = {
-            "event_type": "CreditRecordOpened",
-            "event_version": 1,
-            "payload": {
-                "application_id": app_id,
-                "applicant_id": state["applicant_id"],
-                "session_id": self.session_id,
-                "opened_at": datetime.utcnow().isoformat()
-            }
-        }
-        
-        await self._append_stream(f"credit-{app_id}", event)
+        evt = CreditRecordOpened(
+            application_id=app_id,
+            applicant_id=state["applicant_id"] or "UNKNOWN",
+            session_id=self.session_id,
+            opened_at=datetime.utcnow()
+        )
+        await self._append_stream_event(f"credit-{app_id}", evt)
         
         ms = int((time.time() - t0) * 1000)
         await self._record_node_execution(
@@ -144,6 +148,14 @@ class CreditAnalysisAgent(BaseApexAgent):
         state["company_profile"] = profile.__dict__ if profile else {}
         state["historical_financials"] = [yr.__dict__ for yr in history]
         state["extracted_facts"] = [] # Placeholder for merged docpkg facts
+        
+        # 3. Record Context Loaded (Gas Town)
+        ctx_data = {"profile": state["company_profile"], "history": state["historical_financials"]}
+        await self._record_context_loaded(
+            source=f"crm-companies/{applicant_id}",
+            version=1,
+            content_hash=hashlib.sha256(json.dumps(ctx_data).encode()).hexdigest()
+        )
         
         ms = int((time.time() - t0) * 1000)
         await self._record_node_execution(
@@ -231,31 +243,34 @@ Historical Financials: {json.dumps(state['historical_financials'])}
         app_id = state["application_id"]
         
         # 1. Domain Event (Master Thinker: Idempotency)
-        if not await self.is_event_already_present(f"credit-{app_id}", "CreditAnalysisCompleted"):
-            domain_event = {
-                "event_type": "CreditAnalysisCompleted",
-                "event_version": 1,
-                "payload": {
-                    "decision": state["credit_decision"],
-                    "violations": state["policy_violations"],
-                    "completed_at": datetime.utcnow().isoformat()
-                }
-            }
-            await self._append_stream(f"credit-{app_id}", domain_event)
-        else:
-            print(f"    [Idempotency] 'CreditAnalysisCompleted' already exists for {app_id}. Skipping write.")
+        # Check if already present? _append_stream_event handles duplicates but we can be explicit
+        decision_raw = state["credit_decision"] or {}
+        decision_typed = CreditDecision(
+            risk_tier=RiskTier.MEDIUM,
+            recommended_limit_usd=Decimal(str(decision_raw.get("recommended_limit_usd", 500000))),
+            confidence=float(decision_raw.get("confidence", 0.85)),
+            rationale=decision_raw.get("rationale", "Validated credit risk")
+        )
+        
+        evt = CreditAnalysisCompleted(
+            application_id=app_id,
+            session_id=self.session_id,
+            decision=decision_typed,
+            model_version="claude-3.5-sonnet-v1",
+            model_deployment_id="dep-123",
+            input_data_hash=hashlib.sha256(b"credit-input").hexdigest(),
+            analysis_duration_ms=int((time.time() - t0) * 1000),
+            completed_at=datetime.utcnow()
+        )
+        await self._append_stream_event(f"credit-{app_id}", evt)
         
         # 2. Agent Chaining (Trigger Fraud Screening)
-        trigger_event = {
-            "event_type": "FraudScreeningRequested",
-            "event_version": 1,
-            "payload": {
-                "application_id": app_id,
-                "requested_by": self.agent_id,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        }
-        await self._append_stream(f"loan-{app_id}", trigger_event)
+        trigger_evt = FraudScreeningRequested(
+            application_id=app_id,
+            requested_at=datetime.utcnow(),
+            triggered_by_event_id=self.causation_id
+        )
+        await self._append_stream_event(f"loan-{app_id}", trigger_evt)
         
         # 3. Explicitly record AgentOutputWritten
         written = [

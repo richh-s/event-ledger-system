@@ -38,7 +38,7 @@ class Database:
             self._pool = await asyncpg.create_pool(
                 self.dsn,
                 min_size=1,
-                max_size=10,
+                max_size=50,
                 init=init,
                 ssl=ssl_ctx,
                 statement_cache_size=0 # DISABLE statement cache for PgBouncer/Supabase
@@ -76,3 +76,23 @@ class Database:
             schema_sql = f.read()
         async with self.get_connection() as conn:
             await conn.execute(schema_sql)
+# Global instance for singleton-like access
+_db_instance: Database | None = None
+
+def get_db() -> Database:
+    """Returns a singleton Database instance initialized from DATABASE_URL."""
+    global _db_instance
+    if _db_instance is None:
+        import os
+        dsn = os.getenv("DATABASE_URL")
+        if not dsn:
+            raise RuntimeError("DATABASE_URL environment variable is not set.")
+        _db_instance = Database(dsn)
+    return _db_instance
+
+async def disconnect_db():
+    """Closes the global database pool."""
+    global _db_instance
+    if _db_instance:
+        await _db_instance.disconnect()
+        _db_instance = None

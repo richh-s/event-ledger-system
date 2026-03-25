@@ -1,9 +1,14 @@
 from typing import Any, TypeVar, Type, cast
 from abc import ABC
+from enum import Enum
 
 from src.models.events import BaseEvent, StoredEvent, EVENT_REGISTRY
 
 T = TypeVar('T', bound='BaseAggregate')
+
+class ReconstructionStatus(str, Enum):
+    HEALTHY = "HEALTHY"
+    NEEDS_RECONCILIATION = "NEEDS_RECONCILIATION"
 
 class BaseAggregate(ABC):
     """
@@ -13,6 +18,7 @@ class BaseAggregate(ABC):
         self.stream_id = stream_id
         self.version = 0
         self.uncommitted_events: list[BaseEvent] = []
+        self.reconstruction_issues: list[str] = []
 
     @classmethod
     async def load(cls: Type[T], store: Any, stream_id: str) -> T:
