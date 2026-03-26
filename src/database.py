@@ -1,6 +1,10 @@
 import asyncpg
+import json
+import ssl
+import os
 from contextlib import asynccontextmanager
-
+from pathlib import Path
+from typing import Dict, Any, List, Optional
 
 class Database:
     """Async database connection pool manager for the Ledger."""
@@ -15,9 +19,6 @@ class Database:
     async def connect(self):
         """Initializes the asyncpg connection pool."""
         if not self._pool:
-            import json
-            import ssl
-            
             ssl_ctx = None
             if "sslmode=require" in self.dsn:
                 # asyncpg requires an SSLContext when using SSL
@@ -26,21 +27,17 @@ class Database:
                 ssl_ctx.verify_mode = ssl.CERT_NONE
             
             async def init(con):
-                await con.set_type_codec(
-                    'jsonb',
-                    encoder=json.dumps,
-                    decoder=json.loads,
-                    schema='pg_catalog',
-                )
-            
-            # We enforce standard settings here. The caller should pass
-            # a proper DSN, e.g., 'postgres://user:pass@host/db'
+                # We can't easily register codecs for jsonb AND use pgbouncer in statement mode if 
+                # we rely on it, but Supabase pooling (6543) is fine with simple json encoding if handled manually
+                # or if we use the default.
+                pass
+
             self._pool = await asyncpg.create_pool(
                 self.dsn,
-                min_size=1,
+                min_size=2,
                 max_size=50,
-                init=init,
                 ssl=ssl_ctx,
+                command_timeout=60,
                 statement_cache_size=0 # DISABLE statement cache for PgBouncer/Supabase
             )
 
@@ -72,10 +69,13 @@ class Database:
             
     async def init_schema(self, schema_path: str):
         """Executes the DDL script to initialize the tables."""
+        if not os.path.exists(schema_path):
+            return
         with open(schema_path, "r", encoding="utf-8") as f:
             schema_sql = f.read()
         async with self.get_connection() as conn:
             await conn.execute(schema_sql)
+
 # Global instance for singleton-like access
 _db_instance: Database | None = None
 
@@ -83,7 +83,6 @@ def get_db() -> Database:
     """Returns a singleton Database instance initialized from DATABASE_URL."""
     global _db_instance
     if _db_instance is None:
-        import os
         dsn = os.getenv("DATABASE_URL")
         if not dsn:
             raise RuntimeError("DATABASE_URL environment variable is not set.")

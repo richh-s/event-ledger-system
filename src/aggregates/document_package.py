@@ -2,7 +2,10 @@ from typing import Any
 from src.aggregates.base import BaseAggregate
 from src.models.events import (
     BaseEvent,
-    PackageCreated,
+    DocumentType,
+    DocumentFormat,
+    FinancialFacts,
+    DocumentPackageCreated,
     DocumentAdded,
     DocumentFormatValidated,
     DocumentFormatRejected,
@@ -28,7 +31,7 @@ class DocumentPackageAggregate(BaseAggregate):
         self.quality_anomalies: list[str] = []
         self.overall_confidence = 1.0
 
-    def apply_PackageCreated(self, event: PackageCreated) -> None:
+    def apply_DocumentPackageCreated(self, event: DocumentPackageCreated) -> None:
         self.is_created = True
 
     def apply_DocumentAdded(self, event: DocumentAdded) -> None:
@@ -74,7 +77,7 @@ class DocumentPackageAggregate(BaseAggregate):
         self.version = state.get("version", 0)
 
     # Command methods
-    def create_package(self, event: PackageCreated) -> None:
+    def create_package(self, event: DocumentPackageCreated) -> None:
         if self.is_created:
             raise DomainError(f"Package {self.stream_id} already created.")
         self.append_event(event)

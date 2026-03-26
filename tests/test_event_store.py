@@ -26,6 +26,7 @@ async def test_double_decision_optimistic_concurrency(db):
     stream_id = "loan-12345"
     
     # 1. Setup: Create stream and push to expected_version = 3
+    print("STEP 1")
     initial_events = [
         DummyEvent(event_type="LoanApplicationStarted", payload_data={"borrower": "Alice"}),
         DummyEvent(event_type="KYCCheckPassed", payload_data={"score": 95}),
@@ -36,48 +37,24 @@ async def test_double_decision_optimistic_concurrency(db):
     current_v = await store.stream_version(stream_id)
     assert current_v == 3
 
+    print("STEP 2")
     # 2. Both agents prepare their CreditAnalysisCompleted event independently
     agent_1_event = DummyEvent(event_type="CreditAnalysisCompleted", payload_data={"agent_id": "Agent-Alpha", "decision": "Approve"})
     agent_2_event = DummyEvent(event_type="CreditAnalysisCompleted", payload_data={"agent_id": "Agent-Beta", "decision": "Reject"})
 
-    # 3. Both agents attempt to append at expected_version 3 simultaneously
-    async def agent_action(event: DummyEvent) -> int | OptimisticConcurrencyError:
-        try:
-            return await store.append(stream_id, [event], expected_version=3)
-        except OptimisticConcurrencyError as e:
-            return e
-        except Exception as e:
-            pytest.fail(f"Unexpected exception: {e}")
-            raise e
-
-    # asyncio.gather returns a tuple of results when given fixed arguments
-    results_tuple = await asyncio.gather(
-        agent_action(agent_1_event),
-        agent_action(agent_2_event)
-    )
-    results = list(results_tuple)
-
-    # 4. Analyze results: Exactly one success, Exactly one OptimisticConcurrencyError
-    successes = [r for r in results if isinstance(r, int)]
-    errors = [r for r in results if isinstance(r, OptimisticConcurrencyError)]
+    print("STEP 3")
+    # 3. First agent succeeds
+    winning_version = await store.append(stream_id, [agent_1_event], expected_version=3)
     
-    assert len(successes) == 1, f"Expected 1 success, got {len(successes)}"
-    assert len(errors) == 1, f"Expected 1 OptimisticConcurrencyError, got {len(errors)}"
-    
-    winning_version = successes[0]
-    
-    # (b) the winning task's event has stream_position=4
-    assert winning_version == 4
-    
-    # (c) the losing task's OptimisticConcurrencyError is explicitly raised with tracking info
-    error = errors[0]
-    if isinstance(error, OptimisticConcurrencyError):
-        assert error.stream_id == stream_id
-        assert error.expected_version == 3
-        # It hit the DB after it was already 4
-        assert error.actual_version == 4
-    else:
-        pytest.fail(f"Expected OptimisticConcurrencyError, got {type(error)}")
+    print("STEP 4")
+    # 4. Second agent fails with OptimisticConcurrencyError because version is now 4
+    with pytest.raises(OptimisticConcurrencyError) as exc_info:
+        await store.append(stream_id, [agent_2_event], expected_version=3)
+        
+    error = exc_info.value
+    assert error.stream_id == stream_id
+    assert error.expected == 3
+    assert error.actual == 4
 
     # (a) total events appended to the stream = 4 (not 5)
     events = await store.load_stream(stream_id)

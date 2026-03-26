@@ -4,7 +4,7 @@ from uuid import uuid4
 from datetime import datetime
 from src.database import Database
 from src.event_store import EventStore
-from src.schema.events import StoredEvent
+from src.models.events import StoredEvent
 from src.projections.daemon import ProjectionDaemon
 from src.projections.base import BaseProjection
 
@@ -26,18 +26,9 @@ class MockFailingProjection(BaseProjection):
     async def handle_event(self, conn, event: StoredEvent) -> None:
         raise ValueError("Simulated failure in projection logic!")
 
-@pytest.fixture
-async def infra():
-    import os
-    db = Database(os.getenv("DATABASE_URL"))
-    await db.connect()
-    store = EventStore(db)
-    yield db, store
-    await db.disconnect()
-
 @pytest.mark.asyncio
-async def test_daemon_batch_processing_and_checkpoints(infra):
-    db, store = infra
+async def test_daemon_batch_processing_and_checkpoints(db):
+    store = EventStore(db)
     proj = MockPassingProjection()
     # High batch size and low poll interval to catch up quickly
     daemon = ProjectionDaemon(db, store, [proj], batch_size=1000, poll_interval_ms=10)
@@ -57,7 +48,7 @@ async def test_daemon_batch_processing_and_checkpoints(infra):
             
     # Run daemon for a bit longer to ensure it picks up events
     await daemon.start()
-    await asyncio.sleep(10.0) 
+    await asyncio.sleep(1.0) 
     await daemon.stop()
     
     async with db.get_connection() as conn:
@@ -66,8 +57,8 @@ async def test_daemon_batch_processing_and_checkpoints(infra):
         assert pos >= max_pos
 
 @pytest.mark.asyncio
-async def test_daemon_fault_isolation_and_dlq(infra):
-    db, store = infra
+async def test_daemon_fault_isolation_and_dlq(db):
+    store = EventStore(db)
     fail_proj = MockFailingProjection()
     pass_proj = MockPassingProjection()
     daemon = ProjectionDaemon(db, store, [fail_proj, pass_proj], batch_size=1000, poll_interval_ms=10)
@@ -84,7 +75,7 @@ async def test_daemon_fault_isolation_and_dlq(infra):
         max_pos = await conn.fetchval("SELECT MAX(global_position) FROM events")
     
     await daemon.start()
-    await asyncio.sleep(15.0)
+    await asyncio.sleep(1.0)
     await daemon.stop()
     
     async with db.get_connection() as conn:

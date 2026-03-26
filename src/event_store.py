@@ -111,6 +111,7 @@ class EventStore:
 
                 event_id = uuid.uuid4()
                 
+                import json
                 # Insert and get global_position
                 row = await conn.fetchrow(
                     """
@@ -120,7 +121,7 @@ class EventStore:
                     RETURNING global_position, recorded_at
                     """,
                     event_id, stream_id, new_version, base_event.event_type, 
-                    base_event.event_version, base_event.to_payload(), metadata
+                    base_event.event_version, json.dumps(base_event.to_payload()), json.dumps(metadata)
                 )
 
                 # 3. Create StoredEvent for return
@@ -150,7 +151,7 @@ class EventStore:
                     INSERT INTO outbox (event_id, destination, payload)
                     VALUES ($1, $2, $3)
                     """,
-                    event_id, "event_bus", outbox_payload
+                    event_id, "event_bus", json.dumps(outbox_payload)
                 )
 
             # 5. Update stream version (once after batch)
@@ -180,7 +181,16 @@ class EventStore:
             rows = await conn.fetch(query, *args)
             
         events: list[StoredEvent] = []
+        import json
         for row in rows:
+            p = row['payload']
+            if isinstance(p, (str, bytes)):
+                p = json.loads(p)
+            
+            m = row['metadata']
+            if isinstance(m, (str, bytes)):
+                m = json.loads(m)
+
             event = StoredEvent(
                 event_id=row['event_id'],
                 stream_id=row['stream_id'],
@@ -188,8 +198,8 @@ class EventStore:
                 global_position=row['global_position'],
                 event_type=row['event_type'],
                 event_version=row['event_version'],
-                payload=row['payload'],
-                metadata=row['metadata'],
+                payload=p,
+                metadata=m,
                 recorded_at=row['recorded_at']
             )
             events.append(self._apply_upcasters(event))

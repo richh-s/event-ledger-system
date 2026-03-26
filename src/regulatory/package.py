@@ -1,25 +1,15 @@
 """
-src/queries/historical_reconstruction.py
-========================================
-Phase 6: Point-in-time decision history reconstruction & Regulatory examination package.
-
-Reconstructs the exact state and event history of one application up to a boundary.
-Outputs a structured package containing:
-- Full lifecycle events across all 7 stream families
-- Agent session traces
-- Compliance and Decision summaries
-- Reconstructed reading-model summary
-- Causal links and temporal queries
+src/regulatory/package.py
+=========================
+Phase 6: Regulatory examination package.
 """
 
-import asyncio
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from uuid import UUID
 
 from src.database import Database
 from src.event_store import EventStore
-from src.ledger.schema.events import EVENT_REGISTRY, deserialize_event
+from src.models.events import deserialize_event
 from src.integrity.audit_chain import AuditChainVerifier
 
 class HistoricalReconstructor:
@@ -34,12 +24,7 @@ class HistoricalReconstructor:
         as_of_timestamp: Optional[datetime] = None,
         as_of_global_position: Optional[int] = None
     ) -> Dict[str, Any]:
-        """
-        Deliverable A & B: Fetches events within boundary based on causal correlation_id
-        and builds the comprehensive structured examination package.
-        """
         async with self.db.get_connection() as conn:
-            # Step 1: Discover correlation ID from root loan stream event
             loan_stream = f"loan-{application_id}"
             first_event = await conn.fetchrow(
                 "SELECT metadata->>'correlation_id' as correlation_id FROM events WHERE stream_id = $1 ORDER BY stream_position ASC LIMIT 1",
@@ -51,7 +36,6 @@ class HistoricalReconstructor:
             
             correlation_id = first_event["correlation_id"]
 
-            # Step 2: Query resolving boundary and causal linkage
             query = "SELECT * FROM events WHERE metadata->>'correlation_id' = $1"
             params: List[Any] = [correlation_id]
             
@@ -73,7 +57,6 @@ class HistoricalReconstructor:
             boundary_position = raw_events[-1]["global_position"]
             boundary_time = raw_events[-1]["recorded_at"]
             
-            # Step 3: Replay and construct models
             events = []
             invalid_events_filtered = 0
             streams_included = set()
@@ -84,7 +67,6 @@ class HistoricalReconstructor:
             audit_events = []
             timeline = []
             
-            # Aggregate projection read model simulation
             app_state = {
                 "application_id": application_id,
                 "state": "UNKNOWN",
@@ -103,10 +85,25 @@ class HistoricalReconstructor:
                 evt_type = r["event_type"]
                 payload = r["payload"]
                 
-                # Upcast and validate
+                import json
+                if isinstance(payload, (str, bytes)):
+                    payload = json.loads(payload)
+                
+                metadata = r["metadata"]
+                if isinstance(metadata, (str, bytes)):
+                    metadata = json.loads(metadata)
+                
                 try:
                     obj = deserialize_event(evt_type, payload)
                     evt_dict = obj.model_dump(mode='json') if hasattr(obj, "model_dump") else obj
+                    if isinstance(evt_dict, str):
+                        try:
+                            import json
+                            evt_dict = json.loads(evt_dict)
+                        except:
+                            pass
+                    if not isinstance(evt_dict, dict):
+                        evt_dict = {}
                 except Exception as e:
                     invalid_events_filtered += 1
                     continue
@@ -118,8 +115,8 @@ class HistoricalReconstructor:
                     "event_type": evt_type,
                     "event_version": r["event_version"],
                     "event_id": str(r["event_id"]),
-                    "causation_id": r["metadata"].get("causation_id"),
-                    "correlation_id": r["metadata"].get("correlation_id"),
+                    "causation_id": metadata.get("causation_id") if isinstance(metadata, dict) else None,
+                    "correlation_id": metadata.get("correlation_id") if isinstance(metadata, dict) else None,
                     "payload": evt_dict,
                     "recorded_at": r["recorded_at"].isoformat()
                 }
@@ -127,7 +124,6 @@ class HistoricalReconstructor:
                 
                 app_state["updated_at"] = parsed["recorded_at"]
                 
-                # Fast timeline builder
                 if evt_type in [
                     "ApplicationSubmitted", "DocumentPackageCreated", "PackageReadyForAnalysis",
                     "CreditAnalysisCompleted", "FraudScreeningCompleted", "ComplianceCheckCompleted",
@@ -139,7 +135,6 @@ class HistoricalReconstructor:
                         "recorded_at": parsed["recorded_at"]
                     })
                     
-                # Projection State updates
                 if evt_type == "ApplicationSubmitted":
                     app_state["state"] = "SUBMITTED"
                     app_state["requested_amount_usd"] = evt_dict.get("requested_amount_usd")
@@ -158,10 +153,10 @@ class HistoricalReconstructor:
                 elif evt_type in ["ApplicationApproved", "ApplicationDeclined"]:
                     app_state["state"] = "APPROVED" if evt_type == "ApplicationApproved" else "DECLINED"
                 
-                # Categorization buckets
                 if stream_id.startswith("agent-"):
                     if stream_id not in agent_traces:
                         agent_traces[stream_id] = []
+                        
                     agent_traces[stream_id].append(parsed)
                     
                 if stream_id.startswith("compliance-"):
@@ -177,22 +172,31 @@ class HistoricalReconstructor:
             if not events:
                 raise ValueError("All matching events were filtered out due to schema validation failures.")
 
-            # Step 4: Verification Summaries
             session_structure_passed = True
             for st_id, tr in agent_traces.items():
                 if tr and tr[0]["event_type"] not in ("AgentSessionStarted", "AgentSessionRecovered"):
                     session_structure_passed = False
 
-            # We'll just run verifying up to boundary directly or rely on the audit hashes already computed
-            # For under 60 seconds performance, we assume chain hash logic checks out if latest verification event matches
             latest_audit = audit_events[-1] if audit_events else None
-            audit_integrity_passed = latest_audit["payload"].get("chain_valid", False) if latest_audit else "UNKNOWN"
+            
+            def safe_get(p, key, default=None):
+                if isinstance(p, str):
+                    try:
+                        import json
+                        p = json.loads(p)
+                    except:
+                        pass
+                if isinstance(p, dict):
+                    return p.get(key, default)
+                return default
+
+            audit_integrity_passed = safe_get(latest_audit["payload"], "chain_valid", False) if latest_audit else "UNKNOWN"
             
             compliance_summary = {
                 "rules_evaluated": sum(1 for e in compliance_events if e["event_type"] in ["ComplianceRulePassed", "ComplianceRuleFailed"]),
                 "rules_passed": sum(1 for e in compliance_events if e["event_type"] == "ComplianceRulePassed"),
                 "rules_failed": sum(1 for e in compliance_events if e["event_type"] == "ComplianceRuleFailed"),
-                "hard_block_present": any(e["payload"].get("is_hard_block") for e in compliance_events if e["event_type"] == "ComplianceRuleFailed"),
+                "hard_block_present": any(safe_get(e["payload"], "is_hard_block") for e in compliance_events if e["event_type"] == "ComplianceRuleFailed"),
                 "final_verdict": app_state["compliance_status"]
             }
             
@@ -231,7 +235,6 @@ class HistoricalReconstructor:
             }
 
     def _generate_narrative(self, app_state: dict, decision_path: dict) -> str:
-        """Simple deterministic narrative generation from events."""
         n = [f"Application entered system at {app_state['created_at']}."]
         if app_state["state"] in ["DOCUMENTS_PROCESSED", "PENDING_HUMAN_REVIEW", "APPROVED", "DECLINED"]:
             n.append("Documents were successfully processed and extracted.")
@@ -255,50 +258,8 @@ class HistoricalReconstructor:
             
         return " ".join(n)
 
-    async def what_if_credit_recomputation(
-        self,
-        application_id: str,
-        alternate_model: str,
-        as_of_global_position: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Phase 6 Minimal 'What-If' Support that Stays Aligned:
-        - Replay history up to boundary.
-        - Re-run credit analysis logic purely locally (no mutating db).
-        - Return difference comparison.
-        """
-        # Get historical payload
-        hist = await self.build_regulatory_package(application_id, as_of_global_position=as_of_global_position)
-        
-        # In a full setup, we'd invoke the CreditAnalysisAgent with a mocked write sink just to parse its result.
-        # But this is a strict demonstration-grade alignment: We emulate running the "what-if" by outputting difference summary
-        
-        orig_decision = hist["decision_path_summary"].get("CreditAnalysisCompleted")
-        if not orig_decision:
-            return {"error": "Missing historical credit analysis to recompute from."}
-            
-        # Mock hypothetical execution of alternative policy engine without polluting event store
-        import random
-        hypothetical_limit = orig_decision["decision"].get("recommended_limit_usd", 0) * 1.1
-        hypothetical_tier = "LOW" if orig_decision["decision"].get("risk_tier") == "MEDIUM" else orig_decision["decision"].get("risk_tier")
-        
-        recomputed = {
-            "risk_tier": hypothetical_tier,
-            "recommended_limit_usd": round(hypothetical_limit, 2),
-            "confidence": min(0.99, orig_decision["decision"].get("confidence", 0) + 0.1),
-            "rationale": f"(Hypothetical {alternate_model} run) Re-evaluated historical facts."
-        }
-        
-        return {
-            "inputs_used": {
-                "application_id": application_id,
-                "boundary_position": hist["metadata"]["as_of_global_position"],
-                "alternate_model": alternate_model
-            },
-            "historical_outcome": orig_decision["decision"],
-            "recomputed_outcome": recomputed,
-            "difference_summary": {
-                "tier_changed": orig_decision["decision"].get("risk_tier") != recomputed["risk_tier"],
-                "limit_diff": recomputed["recommended_limit_usd"] - orig_decision["decision"].get("recommended_limit_usd", 0)
-            }
-        }
+
+async def generate_regulatory_package(application_id: str, db: Database, store: EventStore, as_of_global_position=None, as_of_timestamp=None) -> Dict[str, Any]:
+    """generate_regulatory_package(): self-contained JSON examination package with event stream."""
+    reconstructor = HistoricalReconstructor(db, store)
+    return await reconstructor.build_regulatory_package(application_id, as_of_timestamp=as_of_timestamp, as_of_global_position=as_of_global_position)

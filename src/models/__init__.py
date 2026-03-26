@@ -1,4 +1,4 @@
-from src.ledger.schema.events import (
+from src.models.events import (
     BaseEvent,
     StoredEvent,
     StreamMetadata,

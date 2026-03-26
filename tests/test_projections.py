@@ -1,21 +1,13 @@
 import pytest
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 from src.database import Database
 from src.event_store import EventStore
 from src.projections.application_summary import ApplicationSummaryProjection
-from src.projections.decision_timeline import DecisionTimelineProjection
-from src.projections.agent_session_trace import AgentSessionTraceProjection
-from src.schema.events import ApplicationSubmitted, LoanPurpose, AgentEvent, StoredEvent
-
-@pytest.fixture
-async def db():
-    import os
-    db = Database(os.getenv("DATABASE_URL"))
-    await db.connect()
-    yield db
-    await db.disconnect()
+from src.projections.compliance_audit import ComplianceAuditViewProjection
+from src.projections.agent_performance import AgentPerformanceLedgerProjection
+from src.models.events import ApplicationSubmitted, LoanPurpose, AgentEvent, StoredEvent
 
 @pytest.mark.asyncio
 async def test_application_summary_projection(db):
@@ -35,7 +27,7 @@ async def test_application_summary_projection(db):
             "requested_amount_usd": 50000,
             "loan_purpose": "WORKING_CAPITAL"
         },
-        recorded_at=datetime.utcnow()
+        recorded_at=datetime.now(timezone.utc)
     )
     
     async with db.transaction() as conn:
@@ -59,7 +51,7 @@ async def test_application_summary_projection(db):
             "application_id": app_id,
             "decision": {"risk_tier": "LOW", "confidence": 0.95}
         },
-        recorded_at=datetime.utcnow()
+        recorded_at=datetime.now(timezone.utc)
     )
     
     async with db.transaction() as conn:
@@ -67,53 +59,38 @@ async def test_application_summary_projection(db):
         
     async with db.get_connection() as conn:
         row = await conn.fetchrow("SELECT * FROM application_summary WHERE application_id = $1", app_id)
-        assert row['credit_risk_tier'] == "LOW"
-        assert row['credit_confidence'] == 0.95
+        assert row is not None
+        # Align with Phase 3 schema column 'risk_tier'
+        assert row['risk_tier'] == "LOW"
 
 @pytest.mark.asyncio
-async def test_decision_timeline_projection(db):
-    proj = DecisionTimelineProjection()
+async def test_compliance_audit_view_projection(db):
+    proj = ComplianceAuditViewProjection()
     app_id = f"TEST-APP-{uuid4().hex[:4]}"
     
     event = StoredEvent(
         event_id=uuid4(),
-        stream_id=f"loan-{app_id}",
+        stream_id=f"compliance-{app_id}",
         stream_position=1,
         global_position=200,
-        event_type="ApplicationSubmitted",
-        payload={"application_id": app_id, "applicant_id": "U-1"},
-        recorded_at=datetime.utcnow()
+        event_type="ComplianceRulePassed",
+        payload={"application_id": app_id, "rule_id": "r1", "rule_version": "v1.0"},
+        recorded_at=datetime.now(timezone.utc)
     )
     
     async with db.transaction() as conn:
         await proj.handle_event(conn, event)
         
     async with db.get_connection() as conn:
-        rows = await conn.fetch("SELECT * FROM decision_timeline WHERE application_id = $1 ORDER BY sequence ASC", app_id)
+        rows = await conn.fetch("SELECT * FROM compliance_audit_view WHERE application_id = $1", app_id)
         assert len(rows) == 1
-        assert rows[0]['event_type'] == "ApplicationSubmitted"
-        assert rows[0]['sequence'] == 1
+        assert rows[0]['result'] == "PASS"
 
 @pytest.mark.asyncio
-async def test_agent_session_trace_projection(db):
-    proj = AgentSessionTraceProjection()
+async def test_agent_performance_ledger_projection(db):
+    proj = AgentPerformanceLedgerProjection()
     session_id = f"SESS-{uuid4().hex[:4]}"
     
-    # 1. Session Started
-    event_start = StoredEvent(
-        event_id=uuid4(),
-        stream_id=f"agent-credit-{session_id}",
-        stream_position=1,
-        global_position=300,
-        event_type="AgentSessionStarted",
-        payload={"session_id": session_id, "agent_type": "credit_analysis", "model_version": "v1"},
-        recorded_at=datetime.utcnow()
-    )
-    
-    async with db.transaction() as conn:
-        await proj.handle_event(conn, event_start)
-    
-    # 2. Node Executed
     event_node = StoredEvent(
         event_id=uuid4(),
         stream_id=f"agent-credit-{session_id}",
@@ -121,21 +98,23 @@ async def test_agent_session_trace_projection(db):
         global_position=301,
         event_type="AgentNodeExecuted",
         payload={
-            "session_id": session_id, 
+            "session_id": session_id,
+            "agent_type": "credit_analysis",
+            "model_version": "v1",
             "node_name": "validate_inputs", 
             "node_sequence": 1,
-            "duration_ms": 100
+            "duration_ms": 100,
+            "confidence_score": 0.8
         },
-        recorded_at=datetime.utcnow()
+        recorded_at=datetime.now(timezone.utc)
     )
     
     async with db.transaction() as conn:
         await proj.handle_event(conn, event_node)
         
     async with db.get_connection() as conn:
-        h = await conn.fetchrow("SELECT * FROM agent_session_header WHERE session_id = $1", session_id)
-        assert h is not None
-        
-        t = await conn.fetch("SELECT * FROM agent_session_trace WHERE session_id = $1", session_id)
-        assert len(t) == 1
-        assert t[0]['node_name'] == "validate_inputs"
+        rows = await conn.fetch("SELECT * FROM agent_performance_ledger WHERE agent_id = $1", "credit_analysis")
+        assert len(rows) == 1
+        assert float(rows[0]['analyses_completed']) == 1
+        assert float(rows[0]['avg_duration_ms']) == 100
+
