@@ -2,9 +2,13 @@
 import asyncio
 import os
 import json
+from dotenv import load_dotenv
+
 from src.database import get_db, disconnect_db
 from src.event_store import EventStore
 from src.what_if.projector import run_what_if
+
+load_dotenv()
 
 async def run_what_if_demo():
     db = get_db()

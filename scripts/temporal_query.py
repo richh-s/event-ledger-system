@@ -4,10 +4,13 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
+from dotenv import load_dotenv
 
 from src.database import get_db, disconnect_db
 from src.event_store import EventStore
 from src.regulatory.package import generate_regulatory_package
+
+load_dotenv()
 
 async def run_temporal_demo():
     db = get_db()

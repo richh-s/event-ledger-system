@@ -3,6 +3,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import List
+from dotenv import load_dotenv
 
 from src.database import get_db, disconnect_db
 from src.event_store import EventStore
@@ -15,6 +16,8 @@ from src.models.events import (
     AgentNodeExecuted,
     AgentType
 )
+
+load_dotenv()
 
 async def run_gas_town_demo():
     db = get_db()

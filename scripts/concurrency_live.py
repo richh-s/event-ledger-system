@@ -1,9 +1,9 @@
-
 import asyncio
 import uuid
 import logging
 from decimal import Decimal
 from datetime import datetime
+from dotenv import load_dotenv
 from typing import List
 
 from src.database import get_db, disconnect_db
@@ -19,6 +19,8 @@ from src.models.events import (
     LoanPurpose
 )
 from src.exceptions import OptimisticConcurrencyError
+
+load_dotenv()
 
 # Configure logging to show the collision
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

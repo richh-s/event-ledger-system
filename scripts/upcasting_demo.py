@@ -4,10 +4,13 @@ import json
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from dotenv import load_dotenv
 
 from src.database import get_db, disconnect_db
 from src.event_store import EventStore
 from src.models.events import StoredEvent
+
+load_dotenv()
 
 async def run_upcasting_demo():
     db = get_db()
