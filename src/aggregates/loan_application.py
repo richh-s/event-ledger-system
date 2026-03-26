@@ -130,21 +130,6 @@ class LoanApplicationAggregate(BaseAggregate):
     def apply_HumanReviewRequested(self, event: HumanReviewRequested) -> None:
         self.state = ApplicationState.PENDING_HUMAN_REVIEW
 
-    def apply_CreditAnalysisCompleted(self, event: CreditAnalysisCompleted) -> None:
-        self.state = ApplicationState.CREDIT_COMPLETE
-
-    def apply_FraudScreeningRequested(self, event: FraudScreeningRequested) -> None:
-        self.state = ApplicationState.FRAUD_SCREENING_REQUESTED
-
-    def apply_FraudScreeningCompleted(self, event: FraudScreeningCompleted) -> None:
-        self.state = ApplicationState.FRAUD_COMPLETE
-
-    def apply_ComplianceCheckRequested(self, event: ComplianceCheckRequested) -> None:
-        self.state = ApplicationState.COMPLIANCE_CHECK_REQUESTED
-
-    def apply_ComplianceCheckCompleted(self, event: ComplianceCheckCompleted) -> None:
-        self.state = ApplicationState.COMPLIANCE_CHECK_COMPLETE
-
     def apply_HumanReviewCompleted(self, event: HumanReviewCompleted) -> None:
         if event.final_decision == "APPROVED":
             self.state = ApplicationState.PENDING_DECISION # Go back for approval
