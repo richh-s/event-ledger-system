@@ -251,6 +251,17 @@ class StreamMetadata(BaseModel):
     archived_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator('metadata', mode='before')
+    @classmethod
+    def decode_json_fields(cls, v):
+        if isinstance(v, str):
+            try:
+                import json
+                return json.loads(v)
+            except Exception:
+                return v
+        return v
+
 
 # ─── BASE EVENT ───────────────────────────────────────────────────────────────
 
