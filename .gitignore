@@ -23,9 +23,12 @@ htmlcov/
 .pyright/
 
 # VS Code
-.vscode/
 
 # Local data
 database.db
 *.log
 starter/
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
+branch_structure.json

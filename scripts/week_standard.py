@@ -97,7 +97,8 @@ async def run_week_standard():
         check_res(d_sess, "Start Decision Session")
         res = await generate_decision(
             session_id=d_sess, application_id=app_id, recommendation="APPROVE", confidence=0.95,
-            rationale="All criteria met and compliance checks cleared.", key_concerns="None"
+            rationale="All criteria met and compliance checks cleared.", key_concerns="None",
+            contributing_sessions=[c_sess, f_sess, comp_sess]
         )
         check_res(res, "Generate Decision")
 

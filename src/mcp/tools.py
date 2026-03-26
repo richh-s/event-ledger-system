@@ -197,7 +197,9 @@ async def generate_decision(
     recommendation: str,
     confidence: float,
     rationale: str,
-    key_concerns: Optional[str] = None
+    key_concerns: Optional[str] = None,
+    contributing_sessions: Optional[List[str]] = None,
+    model_versions: Optional[Dict[str, str]] = None
 ) -> str:
     """
     generate_decision: Record the final recommendation from the decision orchestrator.
@@ -215,6 +217,8 @@ async def generate_decision(
         confidence=confidence,
         executive_summary=rationale,
         key_risks=[key_concerns] if key_concerns else [],
+        contributing_sessions=contributing_sessions or [],
+        model_versions=model_versions or {"orchestrator": "decision-v1"},
         generated_at=datetime.now(timezone.utc)
     )
     agg = await repo.load(LoanApplicationAggregate, f"loan-{application_id}")
