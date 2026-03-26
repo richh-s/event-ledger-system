@@ -1,5 +1,8 @@
 # Domain Notes — The Ledger: Event Sourcing for Apex Financial Services
 
+> [!IMPORTANT]
+> **This document is MERGED into [FINAL_REPORT.md](FINAL_REPORT.md).** Please refer to the final report for the consolidated architectural and domain analysis.
+
 ---
 
 ## 1. EDA vs. ES Distinction

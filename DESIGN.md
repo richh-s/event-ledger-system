@@ -1,5 +1,8 @@
 # The Ledger: PostgreSQL Schema Design Justification
 
+> [!IMPORTANT]
+> **This document is MERGED into [FINAL_REPORT.md](FINAL_REPORT.md).** Please refer to the final report for the consolidated architectural and design analysis.
+
 This document justifies every column across the four foundational Phase 1 tables. Because Event Sourcing uses events as the sole source of truth in a CQRS architecture, the schema must be robust, deterministic, and rigorously defended.
 
 ---

@@ -2,14 +2,24 @@
 
 The Ledger is an event-sourced, append-only system of record for the Apex high-frequency lending platform. It enforces strict domain invariants and ensures an immutable audit trail for all loan and agent operations.
 
+## 🏁 Phase 6: Finalized
+The system is now fully compliant with the Phase 6 requirements, including advanced verification, upcasting, and coordinated projections.
+
 ## 🚀 Features
 - **Event-Sourced Architecture**: 7 core aggregates with full replay functionality.
 - **Gas Town Memory**: AI agent session tracking with node-level crash recovery.
 - **Optimistic Concurrency**: Database-level write contention resolution.
 - **Snapshot Integration**: High-performance aggregate reconstruction using snapshots.
 - **Transactional Outbox**: Guaranteed event delivery for downstream projections.
+- **Upcasting & Schema Evolution**: Read-path transformation of historical events.
+- **Distributed Projection Coordination**: Coordinated daemons using PostgreSQL advisory locks.
 
-## 🤖 Phase 2 AI Agents (Score 5: Master Thinker)
+## 📄 Key Documentation
+- [**Final Report (Phase 6)**](FINAL_REPORT.md): Comprehensive architectural analysis, test evidence, and limitations.
+- [**Domain Discovery Notes**](DOMAIN_NOTES.md): Technical deep-dive into event semantics, boundaries, and tradeoffs.
+- [**Schema Design Justification**](DESIGN.md): Detailed defense of the PostgreSQL table structures.
+
+## 🤖 AI Agents (Score 5: Master Thinker)
 
 The system includes a sophisticated AI agent chain implemented with **LangGraph**, adhering to the highest architectural standards for resilience and auditability.
 
@@ -57,22 +67,22 @@ The project uses `uv` for lightning-fast dependency management.
 
 ## 🧪 Running Tests
 
-### Phase 1: Core Ledger
+### Core Ledger Tests
 ```bash
 uv run pytest
 ```
 
-### Phase 2: AI Agent Chain (Score 5 Audit)
+### AI Agent Chain Verification
 To run the full 8-step agent chain with advanced proofs (OCC, WBE, Idempotency, etc.):
 ```bash
 uv run python manual_test_phase2_ai.py
 ```
 
-## 📊 Phase 3 CQRS Projections & Read-Side (Spec-Aligned)
+## 📊 CQRS Projections & Read-Side
 
 The read-side of The Ledger implements a strict CQRS split, using an asynchronous projection daemon to maintain optimized views for high-performance consumption.
 
-### Exactly 3 Projections
+### Exactly 3 Projections (Spec-Aligned)
 - **ApplicationSummary**: Real-time state of all loan applications (PII, status, metrics).
 - **ComplianceAuditView**: Detailed rule-level regulatory trail with **Snapshot-based temporal queries** (`?as_of`).
 - **AgentPerformanceLedger**: Incremental aggregation of agent/model accuracy and throughput.
@@ -81,6 +91,7 @@ The read-side of The Ledger implements a strict CQRS split, using an asynchronou
 - **Independent Checkpoints**: Each projection tracks its own `global_position` without global locks.
 - **Fault-Tolerant**: Isolated failures are moved to a **Dead Letter Queue (DLQ)** while the daemon continues.
 - **Graceful Shutdown**: Flag-based lifecycle prevents transaction rollbacks during shutdown.
+- **Coordinated Execution**: Distributed nodes coordinate via PostgreSQL advisory locks and leases.
 
 ## 🔌 MCP Integration
 

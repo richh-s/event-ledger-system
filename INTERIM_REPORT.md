@@ -1,4 +1,7 @@
-Interim Report — Sunday March 22, 2026
+# Interim Report — Sunday March 22, 2026
+
+> [!IMPORTANT]
+> **This report is SUPERSEDED by [FINAL_REPORT.md](FINAL_REPORT.md).** Please refer to the final report for the complete Phase 6 implementation, test evidence, and architectural limitations.
 
 Author: Rahel Samson
 
