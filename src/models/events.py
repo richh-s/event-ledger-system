@@ -224,9 +224,9 @@ class StoredEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     recorded_at: datetime
 
-    @field_validator('payload', mode='before')
+    @field_validator('payload', 'metadata', mode='before')
     @classmethod
-    def decode_payload(cls, v):
+    def decode_json_fields(cls, v):
         if isinstance(v, str):
             try:
                 return json.loads(v)

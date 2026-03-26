@@ -125,7 +125,17 @@ class AgentSessionAggregate(BaseAggregate):
     def record_output_written(self, event: AgentOutputWritten) -> None:
         self.assert_session_started()
         
-        # Gas Town Write-Time Enforcement:
+        # Rule 3: Model Version Locking
+        # If any written event contains a model version, it must match the session's version.
+        for out_event in event.events_written:
+            out_model = out_event.get("model_version")
+            if out_model and out_model != self.model_version:
+                raise DomainError(
+                    f"Model Lock Violation: Agent session {self.stream_id} is locked to model {self.model_version}, "
+                    f"but attempted to write an event with model {out_model}."
+                )
+
+        # Gas Town Write-Time Enforcement (Rule 2):
         # Invariant: Output MUST reference a context loaded in this session.
         if event.context_event_id not in self.loaded_context_ids:
             raise DomainError(

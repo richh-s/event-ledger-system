@@ -179,7 +179,23 @@ class LoanApplicationAggregate(BaseAggregate):
         self.append_event(event)
 
     def generate_decision(self, event: DecisionGenerated) -> None:
+        """
+        Rule 4: Confidence floor below 0.6 forces REFERRED state.
+        Rule 6: Causal chain enforcement (must list contributing sessions).
+        """
         self._assert_valid_transition(ApplicationState.PENDING_DECISION)
+        
+        # Rule 6: Causal chain enforcement
+        if not event.contributing_sessions:
+            raise DomainError(f"Causal Violation: DecisionGenerated for {self.stream_id} must reference at least one contributing_agent_session.")
+            
+        # Rule 4: Confidence floor
+        if event.confidence < 0.6:
+            # Enforce REFERRED state regardless of recommendation
+            self.state = ApplicationState.REFERRED
+        else:
+            self.state = ApplicationState.PENDING_DECISION
+            
         self.append_event(event)
 
     def assert_no_hard_block(self, compliance_record: ComplianceRecordAggregate) -> None:

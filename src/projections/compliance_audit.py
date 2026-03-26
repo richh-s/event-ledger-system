@@ -115,7 +115,7 @@ class ComplianceAuditViewProjection(BaseProjection):
                 application_id, rule_id, rule_version, result,
                 is_hard_block, recorded_at, metadata, global_position
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
             ON CONFLICT (application_id, rule_id) DO UPDATE SET
                 rule_version = EXCLUDED.rule_version,
                 result = EXCLUDED.result,
@@ -126,7 +126,7 @@ class ComplianceAuditViewProjection(BaseProjection):
             WHERE EXCLUDED.global_position > compliance_audit_view.global_position
             """,
             app_id, rule_id, rule_version, result,
-            is_hard_block, recorded_at, metadata, global_position  # dict — asyncpg JSONB codec handles serialization
+            is_hard_block, recorded_at, json.dumps(metadata), global_position
         )
 
     async def _save_snapshot(self, conn, app_id: str, at_position: int) -> None:
@@ -139,10 +139,10 @@ class ComplianceAuditViewProjection(BaseProjection):
         await conn.execute(
             """
             INSERT INTO compliance_snapshots (application_id, global_position, snapshot_data)
-            VALUES ($1, $2, $3)
+            VALUES ($1, $2, $3::jsonb)
             ON CONFLICT (application_id, global_position) DO NOTHING
             """,
-            app_id, at_position, snapshot_data  # list[dict] — asyncpg JSONB codec handles serialization
+            app_id, at_position, json.dumps(snapshot_data)
         )
 
     def _build_meta(self, event: StoredEvent) -> dict:
